@@ -14,6 +14,9 @@ module.exports = class extends Base {
   static check() {
     return !!STEAM_KEY;
   }
+  static info() {
+    return { origin: new URL(PLAYER_SUMMARY_URL).hostname };
+  }
 
   /**
    * Step 1: Redirect the user to Steam's OpenID login page.

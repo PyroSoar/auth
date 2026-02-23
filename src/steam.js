@@ -3,7 +3,7 @@ const qs = require('querystring');
 const request = require('request-promise-native');
 
 const OPENID_CHECK_URL = 'https://steamcommunity.com/openid/login';
-const PLAYER_SUMMARY_URL = 'https://api.steamcommunity.com/ISteamUser/GetPlayerSummaries/v0002/';
+const PLAYER_SUMMARY_URL = 'https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/';
 
 const { STEAM_KEY } = process.env;
 

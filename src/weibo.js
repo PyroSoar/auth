@@ -22,14 +22,14 @@ module.exports = class extends Base {
   }
 
   redirect() {
-    const { redirect, state } = this.ctx.params;
+    const { state } = this.ctx.params;
     const redirectUri = this.getCompleteUrl('/weibo');
 
     const url = OAUTH_URL + '?' + qs.stringify({
       client_id: WEIBO_ID,
       redirect_uri: redirectUri,
       response_type: 'code',
-      state: qs.stringify({ redirect, state })
+      state // ⭐ 直接透传
     });
 
     return this.ctx.redirect(url);

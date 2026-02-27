@@ -76,7 +76,8 @@ module.exports = class extends Base {
       form: { access_token },
       json: true
     });
-
+    console.log('[weibo] access_token:', access_token);
+    console.log('[weibo] tokenInfo:', tokenInfo);
     const userInfo = await request.get(
       USER_INFO_URL + '?' + qs.stringify({
         access_token,

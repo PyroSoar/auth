@@ -20,18 +20,17 @@ module.exports = class extends Base {
     };
   }
 
-  redirect() {
-    const { state } = this.ctx.params;
-    const redirectUri = this.getCompleteUrl('/weibo');
+  async redirect() {
+    const { redirect, state } = this.ctx.params;
+    const redirectUrl = this.getCompleteUrl('/weibo');
 
     const url = OAUTH_URL + '?' + qs.stringify({
       client_id: WEIBO_ID,
-      redirect_uri: redirectUri,
+      redirect_uri: redirectUrl,
       response_type: 'code',
-      state
+      state: qs.stringify({ redirect, state }),
     });
 
-    console.log('[weibo] redirecting to:', url);
     return this.ctx.redirect(url);
   }
 

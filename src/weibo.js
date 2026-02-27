@@ -21,54 +21,66 @@ module.exports = class extends Base {
     };
   }
 
-  /**
-   * Step 1: redirect to Weibo authorize page
-   */
   redirect() {
     const { redirect, state } = this.ctx.params;
-
-    // IMPORTANT: redirect_uri MUST be pure
     const redirectUri = this.getCompleteUrl('/weibo');
-
-    console.log('[weibo] redirect_uri used:', redirectUri);
 
     const url = OAUTH_URL + '?' + qs.stringify({
       client_id: WEIBO_ID,
       redirect_uri: redirectUri,
       response_type: 'code',
-      state: qs.stringify({ redirect, state }) // put custom data into state
+      state: qs.stringify({ redirect, state })
     });
 
     return this.ctx.redirect(url);
   }
 
-  /**
-   * Step 2: exchange code for access token
-   */
   async getAccessToken(code) {
-
     const redirectUri = this.getCompleteUrl('/weibo');
-
-    console.log('[weibo] access_token redirect_uri:', redirectUri);
-
-    const params = {
-      client_id: WEIBO_ID,
-      client_secret: WEIBO_SECRET,
-      grant_type: 'authorization_code',
-      code,
-      redirect_uri: redirectUri
-    };
 
     return request.post({
       url: ACCESS_TOKEN_URL,
-      form: params,
+      form: {
+        client_id: WEIBO_ID,
+        client_secret: WEIBO_SECRET,
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: redirectUri
+      },
       json: true
     });
   }
 
   /**
-   * Step 3: get user info
+   * 下载头像并转 base64
    */
+  async fetchAvatarAsBase64(avatarUrl) {
+    try {
+      console.log('[weibo] downloading avatar:', avatarUrl);
+
+      const buffer = await request.get({
+        url: avatarUrl,
+        encoding: null, // IMPORTANT: return buffer
+        headers: {
+          Referer: 'https://weibo.com/',
+          'User-Agent': 'Mozilla/5.0'
+        },
+        timeout: 8000
+      });
+
+      const contentType = 'image/jpeg'; // Weibo usually jpg
+      const base64 = buffer.toString('base64');
+
+      console.log('[weibo] avatar size:', buffer.length);
+
+      return `data:${contentType};base64,${base64}`;
+
+    } catch (err) {
+      console.error('[weibo] avatar download failed:', err.message);
+      return avatarUrl; // fallback to original url
+    }
+  }
+
   async getUserInfoByToken({ access_token }) {
 
     const tokenInfo = await request.post({
@@ -76,8 +88,7 @@ module.exports = class extends Base {
       form: { access_token },
       json: true
     });
-    console.log('[weibo] access_token:', access_token);
-    console.log('[weibo] tokenInfo:', tokenInfo);
+
     const userInfo = await request.get(
       USER_INFO_URL + '?' + qs.stringify({
         access_token,
@@ -86,14 +97,17 @@ module.exports = class extends Base {
       { json: true }
     );
 
-    console.log('[weibo] userInfo id:', userInfo.idstr);
+    let avatarUrl = userInfo.avatar_large || userInfo.profile_image_url;
+
+    // 🔥 convert avatar to base64
+    const avatarBase64 = await this.fetchAvatarAsBase64(avatarUrl);
 
     return await this.formatUserResponse({
       id: userInfo.idstr,
       name: userInfo.screen_name || userInfo.name,
       email: undefined,
       url: userInfo.url || `https://weibo.com/u/${userInfo.id}`,
-      avatar: userInfo.avatar_large || userInfo.profile_image_url
+      avatar: avatarBase64
     }, 'weibo');
   }
 };

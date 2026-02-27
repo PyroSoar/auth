@@ -20,25 +20,6 @@ module.exports = class extends Base {
     };
   }
 
-  async auth() {
-    const { code } = this.ctx.query;
-
-    if (!code) {
-      return this.redirect();
-    }
-
-    console.log('[weibo] callback received, code:', code);
-
-    try {
-      const token = await this.getAccessToken(code);
-      return await this.getUserInfoByToken(token);
-    } catch (err) {
-      console.error('[weibo] OAuth error:', err);
-      this.ctx.status = 500;
-      this.ctx.body = { error: err.message };
-    }
-  }
-
   redirect() {
     const { state } = this.ctx.params;
     const redirectUri = this.getCompleteUrl('/weibo');
@@ -51,7 +32,6 @@ module.exports = class extends Base {
     });
 
     console.log('[weibo] redirecting to:', url);
-
     return this.ctx.redirect(url);
   }
 
@@ -60,9 +40,7 @@ module.exports = class extends Base {
 
     const response = await fetch(ACCESS_TOKEN_URL, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded'
-      },
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: qs.stringify({
         client_id: WEIBO_ID,
         client_secret: WEIBO_SECRET,
@@ -73,34 +51,21 @@ module.exports = class extends Base {
     });
 
     const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(JSON.stringify(data));
-    }
-
-    console.log('[weibo] access_token response:', data);
-
+    if (!response.ok) throw new Error(JSON.stringify(data));
     return data;
   }
 
   async getUserInfoByToken({ access_token }) {
 
-    // Step 1: get token info
     const tokenRes = await fetch(TOKEN_INFO_URL, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded'
-      },
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: qs.stringify({ access_token })
     });
 
     const tokenInfo = await tokenRes.json();
+    if (!tokenRes.ok) throw new Error(JSON.stringify(tokenInfo));
 
-    if (!tokenRes.ok) {
-      throw new Error(JSON.stringify(tokenInfo));
-    }
-
-    // Step 2: get user info
     const userRes = await fetch(
       USER_INFO_URL + '?' + qs.stringify({
         access_token,
@@ -109,12 +74,7 @@ module.exports = class extends Base {
     );
 
     const userInfo = await userRes.json();
-
-    if (!userRes.ok) {
-      throw new Error(JSON.stringify(userInfo));
-    }
-
-    console.log('[weibo] user info fetched:', userInfo.idstr);
+    if (!userRes.ok) throw new Error(JSON.stringify(userInfo));
 
     return await this.formatUserResponse({
       id: userInfo.idstr,

@@ -83,4 +83,30 @@ module.exports = class extends Base {
       avatar: userInfo.avatar_large || userInfo.profile_image_url
     }, 'weibo');
   }
+
+  async getUserInfo() {
+    const { code, state: _state } = this.ctx.params;
+    const { redirect, state } = qs.parse(_state);
+
+    if (!code) {
+      return this.redirect();
+    }
+
+    // 浏览器阶段 → 重定向回 Waline
+    if (redirect && this.ctx.headers['user-agent'] !== '@waline') {
+      return this.ctx.redirect(
+        redirect +
+        (redirect.includes('?') ? '&' : '?') +
+        qs.stringify({ code, state })
+      );
+    }
+
+    // 后台 fetch 阶段 → 返回 JSON
+    this.ctx.type = 'json';
+
+    const accessTokenInfo = await this.getAccessToken(code);
+    const userInfo = await this.getUserInfoByToken(accessTokenInfo);
+
+    return this.ctx.body = userInfo;
+  }
 };

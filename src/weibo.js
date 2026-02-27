@@ -21,6 +21,31 @@ module.exports = class extends Base {
     };
   }
 
+  async auth() {
+    const { code } = this.ctx.query;
+
+    // Step 1: first visit → redirect to Weibo
+    if (!code) {
+      return this.redirect();
+    }
+
+    console.log('[weibo] callback received, code:', code);
+
+    try {
+      // Step 2: exchange code for access_token
+      const token = await this.getAccessToken(code);
+
+      console.log('[weibo] token received');
+
+      // Step 3: fetch user info & return Waline response
+      return await this.getUserInfoByToken(token);
+
+    } catch (err) {
+      console.error('[weibo] OAuth error:', err.message);
+      throw err;
+    }
+  }
+
   redirect() {
     const { state } = this.ctx.params;
     const redirectUri = this.getCompleteUrl('/weibo');
@@ -29,8 +54,10 @@ module.exports = class extends Base {
       client_id: WEIBO_ID,
       redirect_uri: redirectUri,
       response_type: 'code',
-      state // ⭐ 直接透传
+      state
     });
+
+    console.log('[weibo] redirecting to:', url);
 
     return this.ctx.redirect(url);
   }
@@ -51,36 +78,6 @@ module.exports = class extends Base {
     });
   }
 
-  /**
-   * 下载头像并转 base64
-   */
-  async fetchAvatarAsBase64(avatarUrl) {
-    try {
-      console.log('[weibo] downloading avatar:', avatarUrl);
-
-      const buffer = await request.get({
-        url: avatarUrl,
-        encoding: null, // IMPORTANT: return buffer
-        headers: {
-          Referer: 'https://weibo.com/',
-          'User-Agent': 'Mozilla/5.0'
-        },
-        timeout: 8000
-      });
-
-      const contentType = 'image/jpeg'; // Weibo usually jpg
-      const base64 = buffer.toString('base64');
-
-      console.log('[weibo] avatar size:', buffer.length);
-
-      return `data:${contentType};base64,${base64}`;
-
-    } catch (err) {
-      console.error('[weibo] avatar download failed:', err.message);
-      return avatarUrl; // fallback to original url
-    }
-  }
-
   async getUserInfoByToken({ access_token }) {
 
     const tokenInfo = await request.post({
@@ -97,17 +94,12 @@ module.exports = class extends Base {
       { json: true }
     );
 
-    let avatarUrl = userInfo.avatar_large || userInfo.profile_image_url;
-
-    // 🔥 convert avatar to base64
-    const avatarBase64 = await this.fetchAvatarAsBase64(avatarUrl);
-
     return await this.formatUserResponse({
       id: userInfo.idstr,
       name: userInfo.screen_name || userInfo.name,
       email: undefined,
       url: userInfo.url || `https://weibo.com/u/${userInfo.id}`,
-      avatar: avatarBase64
+      avatar: userInfo.avatar_large || userInfo.profile_image_url
     }, 'weibo');
   }
 };

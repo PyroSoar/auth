@@ -1,6 +1,5 @@
 const Base = require('./base');
 const qs = require('querystring');
-const request = require('request-promise-native');
 
 const OAUTH_URL = 'https://api.weibo.com/oauth2/authorize';
 const ACCESS_TOKEN_URL = 'https://api.weibo.com/oauth2/access_token';
@@ -24,7 +23,6 @@ module.exports = class extends Base {
   async auth() {
     const { code } = this.ctx.query;
 
-    // Step 1: first visit → redirect to Weibo
     if (!code) {
       return this.redirect();
     }
@@ -32,17 +30,12 @@ module.exports = class extends Base {
     console.log('[weibo] callback received, code:', code);
 
     try {
-      // Step 2: exchange code for access_token
       const token = await this.getAccessToken(code);
-
-      console.log('[weibo] token received');
-
-      // Step 3: fetch user info & return Waline response
       return await this.getUserInfoByToken(token);
-
     } catch (err) {
-      console.error('[weibo] OAuth error:', err.message);
-      throw err;
+      console.error('[weibo] OAuth error:', err);
+      this.ctx.status = 500;
+      this.ctx.body = { error: err.message };
     }
   }
 
@@ -65,34 +58,63 @@ module.exports = class extends Base {
   async getAccessToken(code) {
     const redirectUri = this.getCompleteUrl('/weibo');
 
-    return request.post({
-      url: ACCESS_TOKEN_URL,
-      form: {
+    const response = await fetch(ACCESS_TOKEN_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      body: qs.stringify({
         client_id: WEIBO_ID,
         client_secret: WEIBO_SECRET,
         grant_type: 'authorization_code',
         code,
         redirect_uri: redirectUri
-      },
-      json: true
+      })
     });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(JSON.stringify(data));
+    }
+
+    console.log('[weibo] access_token response:', data);
+
+    return data;
   }
 
   async getUserInfoByToken({ access_token }) {
 
-    const tokenInfo = await request.post({
-      url: TOKEN_INFO_URL,
-      form: { access_token },
-      json: true
+    // Step 1: get token info
+    const tokenRes = await fetch(TOKEN_INFO_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      body: qs.stringify({ access_token })
     });
 
-    const userInfo = await request.get(
+    const tokenInfo = await tokenRes.json();
+
+    if (!tokenRes.ok) {
+      throw new Error(JSON.stringify(tokenInfo));
+    }
+
+    // Step 2: get user info
+    const userRes = await fetch(
       USER_INFO_URL + '?' + qs.stringify({
         access_token,
         uid: tokenInfo.uid
-      }),
-      { json: true }
+      })
     );
+
+    const userInfo = await userRes.json();
+
+    if (!userRes.ok) {
+      throw new Error(JSON.stringify(userInfo));
+    }
+
+    console.log('[weibo] user info fetched:', userInfo.idstr);
 
     return await this.formatUserResponse({
       id: userInfo.idstr,

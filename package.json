@@ -1,19 +1,26 @@
 {
   "name": "@waline/auth",
   "private": true,
-  "description": "social account auth service provider",
-  "version": "1.1.0",
+  "description": "Unified OAuth authentication service for Waline and other projects",
+  "version": "1.2.0",
   "author": "lizheming <i@imnerd.org>",
   "scripts": {
     "start": "vercel dev"
   },
   "dependencies": {
-    "jwt-decode": "^4.0.0",
     "koa": "3.1.2",
+    "oauth-1.0a": "2.2.6",
+    "oauth-sign": "0.9.0",
     "request": "2.88.2",
-    "request-promise-native": "1.0.9"
+    "request-promise-native": "1.0.9",
+    "uuid": "^11.1.0",
+    "jsonwebtoken": "^9.0.3",
+    "jwt-decode": "^4.0.0",
+    "pg": "^8.20.0",
+    "@vercel/postgres": "^0.10.0",
+    "@vercel/functions": "^3.4.3"
   },
   "repository": "https://github.com/walinejs/auth",
-  "license": "MIT",
-  "packageManager": "npm@11.11.0+sha512.f36811c4aae1fde639527368ae44c571d050006a608d67a191f195a801a52637a312d259186254aa3a3799b05335b7390539cf28656d18f0591a1125ba35f973"
+  "license": "MIT"
 }
+

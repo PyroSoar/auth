@@ -1,66 +1,110 @@
 const Base = require('./base');
 const qs = require('querystring');
-const request = require('request-promise-native');
 
-const OAUTH_URL = 'https://api.weibo.com/oauth2/authorize';
-const ACCESS_TOKEN_URL = 'https://api.weibo.com/oauth2/access_token';
-const TOKEN_INFO_URL = 'https://api.weibo.com/oauth2/get_token_info';
-const USER_INFO_URL = 'https://api.weibo.com/2/users/show.json';
+const WEIBO_AUTHORIZE_URL = 'https://api.weibo.com/oauth2/authorize';
+const WEIBO_ACCESS_TOKEN_URL = 'https://api.weibo.com/oauth2/access_token';
+const WEIBO_TOKEN_INFO_URL = 'https://api.weibo.com/oauth2/get_token_info';
+const WEIBO_USER_INFO_URL = 'https://api.weibo.com/2/users/show.json';
 
-const {WEIBO_ID, WEIBO_SECRET} = process.env;
+const { WEIBO_ID, WEIBO_SECRET } = process.env;
+
 module.exports = class extends Base {
+
   static check() {
     return WEIBO_ID && WEIBO_SECRET;
   }
 
   static info() {
     return {
-      origin: new URL(OAUTH_URL).hostname
+      origin: new URL(WEIBO_AUTHORIZE_URL).hostname
     };
   }
-  
-  redirect() {
-    const {redirect, state} = this.ctx.params;
-    const redirectUrl = this.getCompleteUrl('/weibo') + '?' + qs.stringify({redirect, state});
 
-    const url = OAUTH_URL + '?' + qs.stringify({
-      client_id: WEIBO_ID,
-      redirect_uri: redirectUrl,
-      response_type: 'code'
+  async redirect() {
+    // 来自 client 的参数
+    const { redirect: clientRedirect, state: clientState } = this.ctx.params;
+
+    // 你的服务器提供给微博的 redirect_uri
+    const weiboAuthRedirectUri = this.getCompleteUrl('/weibo');
+
+    const weiboAuthState = qs.stringify({
+      redirect: clientRedirect,
+      state: clientState
     });
-    return this.ctx.redirect(url);
+
+    const authorizeUrl = WEIBO_AUTHORIZE_URL + '?' + qs.stringify({
+      client_id: WEIBO_ID,
+      redirect_uri: weiboAuthRedirectUri,
+      response_type: 'code',
+      state: weiboAuthState
+    });
+
+    return this.ctx.redirect(authorizeUrl);
   }
 
-  async getAccessToken(code) {
-    const redirectUrl = this.getCompleteUrl('/weibo');
-    const params = {
-      client_id: WEIBO_ID,
-      client_secret: WEIBO_SECRET,
-      grant_type: 'authorization_code',
-      code,
-      redirect_uri: redirectUrl
-    };
+  async getAccessToken(weiboAuthCode) {
+    const weiboAuthRedirectUri = this.getCompleteUrl('/weibo');
 
-    return request.post({
-      url: ACCESS_TOKEN_URL,
-      form: params,
-      json: true
+    const tokenResponse = await fetch(WEIBO_ACCESS_TOKEN_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: qs.stringify({
+        client_id: WEIBO_ID,
+        client_secret: WEIBO_SECRET,
+        grant_type: 'authorization_code',
+        code: weiboAuthCode,
+        redirect_uri: weiboAuthRedirectUri
+      })
     });
+
+    const tokenData = await tokenResponse.json();
+    if (!tokenResponse.ok) throw new Error(JSON.stringify(tokenData));
+
+    return tokenData; // 包含 weiboAccessToken
   }
 
-  async getUserInfoByToken({access_token}) {
-    const tokenInfo = await request.post({
-      url: TOKEN_INFO_URL,
-      form: { access_token },
-      json: true,
+  async getUserInfoByToken({ access_token: weiboAccessToken }) {
+
+    const tokenInfoRes = await fetch(WEIBO_TOKEN_INFO_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: qs.stringify({ access_token: weiboAccessToken })
     });
-    const userInfo = await request.get(USER_INFO_URL + '?' + qs.stringify({access_token, uid: tokenInfo.uid}), {json: true});
-    return {
-      id: userInfo.idstr,
-      name: userInfo.screen_name || userInfo.name,
-      email: '',
-      url: userInfo.url || `https://weibo.com/u/${userInfo.id}`,
-      avatar: userInfo.avatar_large || userInfo.profile_image_url,
+
+    const weiboTokenInfo = await tokenInfoRes.json();
+    if (!tokenInfoRes.ok) throw new Error(JSON.stringify(weiboTokenInfo));
+
+    const userInfoRes = await fetch(
+      WEIBO_USER_INFO_URL + '?' + qs.stringify({
+        access_token: weiboAccessToken,
+        uid: weiboTokenInfo.uid
+      })
+    );
+
+    const weiboUserInfo = await userInfoRes.json();
+    if (!userInfoRes.ok) throw new Error(JSON.stringify(weiboUserInfo));
+
+    const avatarUrl = weiboUserInfo.avatar_large || weiboUserInfo.profile_image_url;
+    let avatarBase64 = null;
+
+    if (avatarUrl) {
+      const avatarRes = await fetch(avatarUrl, {
+        headers: {
+          'Referer': avatarUrl,
+          'User-Agent': 'Mozilla/5.0'
+        }
+      });
+      const buffer = Buffer.from(await avatarRes.arrayBuffer());
+      const mime = avatarRes.headers.get('content-type') || 'image/jpeg';
+      avatarBase64 = `data:${mime};base64,${buffer.toString('base64')}`;
     }
+
+    return await this.formatUserResponse({
+      id: weiboUserInfo.idstr,
+      name: weiboUserInfo.screen_name || weiboUserInfo.name,
+      email: undefined,
+      url: weiboUserInfo.url || `https://weibo.com/u/${weiboUserInfo.id}`,
+      avatar: avatarBase64
+    }, 'weibo');
   }
-}
+};

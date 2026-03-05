@@ -49,13 +49,14 @@ module.exports = class extends Base {
       json: true
     });
     
-    return {
+    return await this.formatUserResponse({
       id: user.id,
       name: user.name,
-      email: user.email,
-      url: '',
+      email: user.email || undefined,
+      url: undefined,
       avatar: user.picture,
-    }
+      originalResponse: user
+    }, 'google');
   }
 
   async redirect() {
@@ -75,22 +76,5 @@ module.exports = class extends Base {
       state: qs.stringify({redirect, state}),
     });
     return this.ctx.redirect(url);
-  }
-
-  async getUserInfo() {
-    const {code, state: _state} = this.ctx.params;
-    const {redirect, state} = qs.parse(_state);
-    if(!code) {
-      return this.redirect();
-    }
-
-    if(redirect && this.ctx.headers['user-agent'] !== '@waline') {
-      return this.ctx.redirect(redirect + (redirect.includes('?') ? '&' : '?') + qs.stringify({ code, state }));
-    }
-
-    this.ctx.type = 'json';
-    const accessTokenInfo = await this.getAccessToken(code);
-    const userInfo = await this.getUserInfoByToken(accessTokenInfo);
-    return this.ctx.body = userInfo;
   }
 };

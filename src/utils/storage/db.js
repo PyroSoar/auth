@@ -39,4 +39,38 @@ async function upsertThirdPartyInfo(platform, user) {
   }
 }
 
-module.exports = { upsertThirdPartyInfo };
+async function claimOAuthCode(code) {
+  if (!pool) return true;
+  try {
+    // Attempt to insert the code. If it already exists, this throws an error.
+    await pool.query(
+      'INSERT INTO oauth_locks (code) VALUES ($1)',
+      [code]
+    );
+    return true; // Successfully claimed
+  } catch (err) {
+    // Error code 23505 is PostgreSQL's Unique Violation
+    if (err.code === '23505') return false; 
+    throw err;
+  }
+}
+async function saveOAuthResult(code, result) {
+  if (!pool) return;
+  await pool.query(
+    'UPDATE oauth_locks SET result = $2 WHERE code = $1',
+    [code, JSON.stringify(result)]
+  );
+}
+async function getOAuthResult(code) {
+  if (!pool) return null;
+  const { rows } = await pool.query(
+    'SELECT result FROM oauth_locks WHERE code = $1',
+    [code]
+  );
+  return rows[0]?.result || null;
+}
+
+module.exports = {
+  upsertThirdPartyInfo,
+  claimOAuthCode, saveOAuthResult, getOAuthResult
+};

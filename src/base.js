@@ -45,16 +45,6 @@ module.exports = class {
   async getUserInfo() {
     const qs = require('querystring');
     const code = this.ctx.params?.code || this.ctx.query?.code;
-    let redirect = this.ctx.query?.redirect || this.ctx.params?.redirect;
-    let state = this.ctx.query?.state || this.ctx.params?.state;
-
-    console.log('[Base.getUserInfo] Incoming params:', {
-      code,
-      redirect,
-      state,
-      headers: this.ctx.headers
-    });
-
     // Step 1: If no code, this is the initial OAuth entry → redirect to provider
     if (!code) {
       console.log('[Base.getUserInfo] No code found, redirecting to authorize()...');
@@ -62,6 +52,8 @@ module.exports = class {
     }
 
     // Step 2: Extract redirect and inner state from the encoded state string
+    let redirect = this.ctx.query?.redirect || this.ctx.params?.redirect;
+    let state = this.ctx.query?.state || this.ctx.params?.state;
     if (!redirect && state) {
       try {
         const parsed = qs.parse(state);
@@ -104,7 +96,7 @@ module.exports = class {
     }
 
     // Step 4: Browser phase → redirect back to client
-    if (finalRedirect && finalRedirect.startsWith('http') && this.ctx.headers['user-agent'] !== '@waline') {
+    if (finalRedirect && finalRedirect.startsWith('http') ) {
       try {
         const url = new URL(finalRedirect);
         // Always append code

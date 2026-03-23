@@ -1,558 +1,529 @@
 /**
- * Unified OAuth Authentication Service - Integration Examples
- * 
- * This file contains practical examples for integrating
- * the OAuth authentication service with various backend frameworks
+ * Unified OAuth Authentication Service — Integration Examples
+ *
+ * Live service: https://oauth.lzc2002.top/
+ *
+ * These examples show how to integrate the service with common frameworks.
+ * Replace https://oauth.lzc2002.top with your own deployed instance if needed.
+ *
+ * Supported providers:
+ *   github, google, qq, facebook, weibo, twitter, huawei, steam, oidc
  */
 
+const AUTH_SERVICE = 'https://oauth.lzc2002.top';
+
 // ==============================================================================
-// Example 1: Express.js Integration
+// Example 1: Express.js — Full Server-Side Integration
 // ==============================================================================
 
 const express = require('express');
 const session = require('express-session');
-const fetch = require('node-fetch');
+const crypto  = require('crypto');
 
-const app = express();
+const app1 = express();
 
-// Session configuration
-app.use(session({
-  secret: 'your-secret-key',
+app1.use(session({
+  secret: process.env.SESSION_SECRET || 'change-me',
   resave: false,
-  saveUninitialized: true,
-  cookie: { maxAge: 60000 * 60 * 24 * 30 } // 30 days
+  saveUninitialized: false,
+  cookie: { maxAge: 30 * 24 * 60 * 60 * 1000, httpOnly: true, sameSite: 'lax' }
 }));
 
+const VALID_PROVIDERS = ['github', 'google', 'qq', 'facebook', 'weibo', 'twitter', 'huawei', 'steam', 'oidc'];
+
 /**
- * Initiate OAuth login
- * GET /auth/login/github?redirect=<backendCallbackUrl>
+ * Step 1 — Initiate login
+ * Visit: GET /auth/login/github   (or any other provider)
  */
-app.get('/auth/login/:provider', (req, res) => {
+app1.get('/auth/login/:provider', (req, res) => {
   const { provider } = req.params;
-  const { redirect } = req.query;
-  
-  // Validate provider
-  const validProviders = ['github', 'google', 'qq', 'facebook', 'weibo', 'twitter', 'oidc'];
-  if (!validProviders.includes(provider)) {
-    return res.status(400).json({ error: 'Invalid provider' });
+
+  if (!VALID_PROVIDERS.includes(provider)) {
+    return res.status(400).json({ error: `Unknown provider "${provider}"` });
   }
-  
-  // Generate state for CSRF protection
-  const state = Math.random().toString(36).substring(7);
-  req.session.oauth_state = state;
-  
-  // Store redirect URL
-  if (redirect) {
-    req.session.oauth_redirect = redirect;
-  }
-  
-  // Redirect to OAuth authentication service
-  const authUrl = new URL(`https://auth.example.com/${provider}`);
-  authUrl.searchParams.set('redirect', `${process.env.SERVER_URL}/auth/callback/${provider}`);
+
+  // Generate a random CSRF state token and store it in session
+  const state = crypto.randomBytes(16).toString('hex');
+  req.session.oauthState    = state;
+  req.session.oauthProvider = provider;
+
+  // The service will redirect the browser here after the provider callback
+  const callbackUrl = `${process.env.SERVER_URL}/auth/callback/${provider}`;
+
+  // Send the browser to the auth service, which redirects to the OAuth provider
+  const authUrl = new URL(`${AUTH_SERVICE}/${provider}`);
+  authUrl.searchParams.set('redirect', callbackUrl);
   authUrl.searchParams.set('state', state);
-  
+
   res.redirect(authUrl.toString());
 });
 
 /**
- * Handle OAuth callback
- * GET /auth/callback/github?code=<code>&state=<state>
+ * Step 2 — Browser callback
+ * The OAuth provider redirects back to the auth service, which then forwards
+ * the browser here with ?code=<code>&state=<state>&type=<provider>
+ *
+ * GET /auth/callback/github?code=<code>&state=<state>&type=github
  */
-app.get('/auth/callback/:provider', async (req, res) => {
-  const { provider } = req.params;
-  const { code, state } = req.query;
-  
-  // Verify state for CSRF protection
-  if (state !== req.session.oauth_state) {
-    return res.status(400).json({ error: 'CSRF token mismatch' });
+app1.get('/auth/callback/:provider', async (req, res) => {
+  const { provider }          = req.params;
+  const { code, state, type } = req.query;
+
+  // CSRF check
+  if (!state || state !== req.session.oauthState) {
+    return res.status(403).json({ error: 'CSRF state mismatch' });
   }
-  
+  // Optional: also check that type matches expected provider
+  if (type && type !== provider) {
+    return res.status(400).json({ error: 'Provider mismatch in callback' });
+  }
+
   try {
-    // Get user info from OAuth authentication service
-    const authUrl = new URL(`https://auth.example.com/${provider}`);
-    authUrl.searchParams.set('code', code);
-    authUrl.searchParams.set('state', state);
-    
-    const authResponse = await fetch(authUrl.toString());
-    const userData = await authResponse.json();
-    
-    // Handle auth service errors
-    if (userData.errno) {
-      return res.status(userData.errno).json(userData);
-    }
-    
-    // userData structure:
-    // {
-    //   id: "platform-uuid",
-    //   name: "Display Name",
-    //   email: "user@example.com",
-    //   url: "https://profile-url",
-    //   avatar: "https://avatar-url",
-    //   platform: "github"
-    // }
-    
-    // Find or create user in your database
-    const user = await User.findOrCreate({
-      where: {
-        [`${provider}_id`]: userData.id
-      },
-      defaults: {
-        [`${provider}_id`]: userData.id,
-        email: userData.email,
-        name: userData.name,
-        avatar: userData.avatar,
-        provider: provider
+    // Step 3 — Exchange the code for user info (server-to-server call)
+    const infoUrl = new URL(`${AUTH_SERVICE}/${provider}`);
+    infoUrl.searchParams.set('code', code);
+    infoUrl.searchParams.set('state', state);
+
+    const response = await fetch(infoUrl.toString(), {
+      headers: {
+        // Identifying your app as a server-side client triggers the JSON path
+        'User-Agent': '@waline',
+        'Accept': 'application/json'
       }
     });
-    
-    // Update user profile
-    await user[0].update({
-      email: userData.email || user[0].email,
-      name: userData.name || user[0].name,
-      avatar: userData.avatar || user[0].avatar,
-      lastLogin: new Date()
-    });
-    
-    // Create session
-    req.session.userId = user[0].id;
+
+    const userData = await response.json();
+
+    if (!response.ok || userData.errno) {
+      return res.status(userData.errno || 500).json({
+        error: 'Auth service error',
+        detail: userData.message || 'Unknown error'
+      });
+    }
+
+    // userData shape:
+    // { id, name, email, url, avatar, platform }
+
+    // Upsert user in your own database
+    // const user = await db.users.upsert({ platform_id: userData.id, platform: provider }, userData);
+
+    // Store in session
     req.session.user = {
-      id: user[0].id,
-      name: user[0].name,
-      avatar: user[0].avatar,
-      email: user[0].email
+      id:       userData.id,
+      name:     userData.name,
+      email:    userData.email,
+      avatar:   userData.avatar,
+      platform: userData.platform
     };
-    
-    // Redirect back to original URL or dashboard
-    const redirectUrl = req.session.oauth_redirect || '/dashboard';
-    delete req.session.oauth_redirect;
-    
-    res.redirect(redirectUrl);
-  } catch (error) {
-    console.error('OAuth callback error:', error);
-    res.status(500).json({
-      error: 'Authentication failed',
-      message: error.message
-    });
+    delete req.session.oauthState;
+    delete req.session.oauthProvider;
+
+    res.redirect('/dashboard');
+  } catch (err) {
+    console.error('OAuth callback error:', err);
+    res.status(500).json({ error: 'Authentication failed', message: err.message });
   }
 });
 
-/**
- * Get current user
- * GET /auth/user
- */
-app.get('/auth/user', (req, res) => {
-  if (!req.session.user) {
-    return res.status(401).json({ error: 'Not authenticated' });
-  }
-  
+/** Get current session user */
+app1.get('/auth/me', (req, res) => {
+  if (!req.session.user) return res.status(401).json({ error: 'Not authenticated' });
   res.json(req.session.user);
 });
 
-/**
- * Logout
- * POST /auth/logout
- */
-app.post('/auth/logout', (req, res) => {
-  req.session.destroy((err) => {
-    if (err) {
-      return res.status(500).json({ error: 'Logout failed' });
-    }
-    res.json({ success: true });
-  });
+/** Logout */
+app1.post('/auth/logout', (req, res) => {
+  req.session.destroy(() => res.json({ ok: true }));
 });
 
+// app1.listen(3000);
+
+
 // ==============================================================================
-// Example 2: Frontend React Integration
+// Example 2: Next.js — API Routes
 // ==============================================================================
 
-/*
-import React, { useEffect, useState } from 'react';
+// pages/api/auth/[provider].js  (or app/api/auth/[provider]/route.js)
 
-function LoginComponent() {
-  const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(false);
+// import { cookies } from 'next/headers';  // App Router
 
-  // Fetch current user on mount
-  useEffect(() => {
-    fetchUser();
-  }, []);
-
-  async function fetchUser() {
-    try {
-      const response = await fetch('/auth/user');
-      if (response.ok) {
-        const userData = await response.json();
-        setUser(userData);
-      }
-    } catch (error) {
-      console.error('Failed to fetch user:', error);
-    }
+export async function GET_NextLogin(req, { params }) {
+  const { provider } = params;
+  const validProviders = ['github', 'google', 'qq', 'facebook', 'weibo', 'twitter', 'huawei', 'steam', 'oidc'];
+  if (!validProviders.includes(provider)) {
+    return Response.json({ error: 'Invalid provider' }, { status: 400 });
   }
 
-  // Initiate OAuth login
-  function handleOAuthLogin(provider) {
-    const backendCallback = `${window.location.origin}/auth/callback/${provider}`;
-    const authUrl = new URL(`https://auth.example.com/${provider}`);
-    authUrl.searchParams.set('redirect', backendCallback);
-    
-    window.location.href = authUrl.toString();
-  }
+  const state       = crypto.randomUUID();
+  const callbackUrl = `${process.env.NEXT_PUBLIC_URL}/api/auth/callback/${provider}`;
+  const authUrl     = `${AUTH_SERVICE}/${provider}?redirect=${encodeURIComponent(callbackUrl)}&state=${state}`;
 
-  // Logout
-  async function handleLogout() {
-    setLoading(true);
-    try {
-      await fetch('/auth/logout', { method: 'POST' });
-      setUser(null);
-      window.location.href = '/';
-    } catch (error) {
-      console.error('Logout failed:', error);
-      setLoading(false);
-    }
-  }
-
-  if (user) {
-    return (
-      <div className="user-profile">
-        <img src={user.avatar} alt={user.name} />
-        <h2>{user.name}</h2>
-        <p>{user.email}</p>
-        <button onClick={handleLogout} disabled={loading}>
-          {loading ? 'Logging out...' : 'Logout'}
-        </button>
-      </div>
-    );
-  }
-
-  return (
-    <div className="login-buttons">
-      <button onClick={() => handleOAuthLogin('github')}>
-        Login with GitHub
-      </button>
-      <button onClick={() => handleOAuthLogin('google')}>
-        Login with Google
-      </button>
-      <button onClick={() => handleOAuthLogin('qq')}>
-        Login with QQ
-      </button>
-      <button onClick={() => handleOAuthLogin('facebook')}>
-        Login with Facebook
-      </button>
-      <button onClick={() => handleOAuthLogin('weibo')}>
-        Login with Weibo
-      </button>
-      <button onClick={() => handleOAuthLogin('twitter')}>
-        Login with Twitter
-      </button>
-    </div>
-  );
+  // Store state in a short-lived cookie
+  const response = Response.redirect(authUrl, 302);
+  response.headers.set('Set-Cookie', `oauth_state=${state}; Path=/; HttpOnly; SameSite=Lax; Max-Age=600`);
+  return response;
 }
 
-export default LoginComponent;
-*/
+// pages/api/auth/callback/[provider].js
+export async function GET_NextCallback(req, { params }) {
+  const { provider }             = params;
+  const { searchParams }         = new URL(req.url);
+  const code  = searchParams.get('code');
+  const state = searchParams.get('state');
+
+  // Verify CSRF state from cookie
+  const cookieState = req.cookies.get('oauth_state')?.value;
+  if (!cookieState || cookieState !== state) {
+    return Response.json({ error: 'State mismatch' }, { status: 403 });
+  }
+
+  const infoUrl = new URL(`${AUTH_SERVICE}/${provider}`);
+  infoUrl.searchParams.set('code', code);
+  infoUrl.searchParams.set('state', state);
+
+  const resp     = await fetch(infoUrl.toString(), { headers: { 'User-Agent': '@waline' } });
+  const userData = await resp.json();
+
+  if (!resp.ok) {
+    return Response.json({ error: userData.message }, { status: resp.status });
+  }
+
+  // Set session cookie (use iron-session, next-auth, or your own JWT here)
+  const sessionResponse = Response.redirect(`${process.env.NEXT_PUBLIC_URL}/dashboard`, 302);
+  sessionResponse.headers.append('Set-Cookie', `oauth_state=; Path=/; Max-Age=0`);
+  // sessionResponse.headers.append('Set-Cookie', buildSessionCookie(userData));
+  return sessionResponse;
+}
+
 
 // ==============================================================================
-// Example 3: Node.js Database Model (Sequelize)
-// ==============================================================================
-
-/*
-const { DataTypes } = require('sequelize');
-
-module.exports = (sequelize) => {
-  const User = sequelize.define('User', {
-    id: {
-      type: DataTypes.INTEGER,
-      primaryKey: true,
-      autoIncrement: true
-    },
-    email: {
-      type: DataTypes.STRING,
-      unique: true,
-      sparse: true
-    },
-    name: {
-      type: DataTypes.STRING,
-      allowNull: false
-    },
-    avatar: {
-      type: DataTypes.STRING
-    },
-    // OAuth IDs
-    github_id: {
-      type: DataTypes.STRING,
-      unique: true,
-      sparse: true
-    },
-    google_id: {
-      type: DataTypes.STRING,
-      unique: true,
-      sparse: true
-    },
-    qq_id: {
-      type: DataTypes.STRING,
-      unique: true,
-      sparse: true
-    },
-    facebook_id: {
-      type: DataTypes.STRING,
-      unique: true,
-      sparse: true
-    },
-    weibo_id: {
-      type: DataTypes.STRING,
-      unique: true,
-      sparse: true
-    },
-    twitter_id: {
-      type: DataTypes.STRING,
-      unique: true,
-      sparse: true
-    },
-    oidc_id: {
-      type: DataTypes.STRING,
-      unique: true,
-      sparse: true
-    },
-    // Metadata
-    provider: {
-      type: DataTypes.STRING,
-      comment: 'Primary OAuth provider used for this account'
-    },
-    lastLogin: {
-      type: DataTypes.DATE,
-      defaultValue: DataTypes.NOW
-    },
-    createdAt: {
-      type: DataTypes.DATE,
-      defaultValue: DataTypes.NOW
-    },
-    updatedAt: {
-      type: DataTypes.DATE,
-      defaultValue: DataTypes.NOW
-    }
-  });
-
-  return User;
-};
-*/
-
-// ==============================================================================
-// Example 4: API Client Utility
+// Example 3: Vanilla Browser JavaScript — Popup Flow
 // ==============================================================================
 
 /**
- * OAuth Authentication Service Client
- * Universal client for OAuth service integration
+ * Opens a popup window for OAuth login.
+ * The popup redirects through the auth service, then back to /oauth-callback.html.
  */
-class OAuthServiceClient {
-  constructor(baseUrl = 'https://auth.example.com') {
-    this.baseUrl = baseUrl;
+class OAuthPopup {
+  constructor(authServiceUrl = AUTH_SERVICE) {
+    this.authServiceUrl = authServiceUrl;
+    this._listeners     = {};
   }
 
   /**
-   * Get OAuth authorization URL
+   * @param {'github'|'google'|'qq'|'facebook'|'weibo'|'twitter'|'huawei'|'steam'|'oidc'} provider
+   * @returns {Promise<{id, name, email, url, avatar, platform}>}
    */
-  getAuthorizationUrl(provider, redirectUri, state = null) {
-    const url = new URL(`${this.baseUrl}/${provider}`);
-    url.searchParams.set('redirect', redirectUri);
-    
-    if (state) {
-      url.searchParams.set('state', state);
-    }
-    
-    return url.toString();
-  }
+  login(provider) {
+    return new Promise((resolve, reject) => {
+      const state       = Math.random().toString(36).slice(2);
+      const callbackUrl = `${location.origin}/oauth-callback.html`;
 
-  /**
-   * Exchange authorization code for user info
-   */
-  async getUserInfo(provider, code, state = null) {
-    const url = new URL(`${this.baseUrl}/${provider}`);
-    url.searchParams.set('code', code);
-    
-    if (state) {
-      url.searchParams.set('state', state);
-    }
-    
-    const response = await fetch(url.toString());
-    
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(`${error.errno}: ${error.message}`);
-    }
-    
-    return await response.json();
-  }
+      const authUrl = `${this.authServiceUrl}/${provider}`
+        + `?redirect=${encodeURIComponent(callbackUrl)}`
+        + `&state=${encodeURIComponent(state)}`;
 
-  /**
-   * Check service availability
-   */
-  async getAvailableServices() {
-    const response = await fetch(`${this.baseUrl}/`);
-    
-    if (!response.ok) {
-      throw new Error('Failed to fetch services');
-    }
-    
-    return await response.json();
+      const popup = window.open(authUrl, 'oauth_popup', 'width=520,height=640,menubar=no,toolbar=no');
+      if (!popup) { reject(new Error('Popup blocked')); return; }
+
+      const onMessage = async (event) => {
+        if (event.origin !== location.origin) return;
+        if (!event.data || event.data.type !== 'oauth_callback') return;
+
+        window.removeEventListener('message', onMessage);
+
+        const { code, state: returnedState } = event.data;
+        if (returnedState !== state) { reject(new Error('CSRF state mismatch')); return; }
+
+        // Exchange code for user info via your own backend to keep secrets server-side
+        try {
+          const res  = await fetch(`/api/auth/exchange?provider=${provider}&code=${code}&state=${returnedState}`);
+          const user = await res.json();
+          res.ok ? resolve(user) : reject(new Error(user.message || 'Exchange failed'));
+        } catch (err) {
+          reject(err);
+        }
+      };
+
+      window.addEventListener('message', onMessage);
+
+      // Clean up if popup is closed without completing login
+      const pollClose = setInterval(() => {
+        if (popup.closed) {
+          clearInterval(pollClose);
+          window.removeEventListener('message', onMessage);
+          reject(new Error('Login popup closed'));
+        }
+      }, 500);
+    });
   }
 }
+
+// oauth-callback.html — place at your origin
+// <script>
+//   const params = new URLSearchParams(location.search);
+//   window.opener.postMessage({
+//     type: 'oauth_callback',
+//     code:  params.get('code'),
+//     state: params.get('state'),
+//     platformType: params.get('type')
+//   }, location.origin);
+//   window.close();
+// </script>
 
 // Usage:
-// const client = new OAuthServiceClient('https://auth.example.com');
-// const authUrl = client.getAuthorizationUrl('github', 'https://myapp.com/callback');
-// const userInfo = await client.getUserInfo('github', code, state);
+// const oauth = new OAuthPopup();
+// const user  = await oauth.login('github');
+// console.log(user.name, user.avatar);
+
 
 // ==============================================================================
-// Example 5: Error Handling Middleware
+// Example 4: Check which providers are enabled on the auth service
 // ==============================================================================
 
-function handleOAuthError(error, res) {
-  console.error('OAuth Error:', error);
-  
-  const errorMap = {
-    'ETIMEDOUT': {
-      errno: 503,
-      message: 'OAuth service temporarily unavailable'
-    },
-    'ECONNREFUSED': {
-      errno: 503,
-      message: 'Cannot connect to authentication service'
-    },
-    'CSRF token mismatch': {
-      errno: 400,
-      message: 'Invalid security token. Please try logging in again.'
-    },
-    'Invalid provider': {
-      errno: 400,
-      message: 'Unsupported authentication provider'
+/**
+ * Returns the list of active providers from the live service.
+ * Useful for showing only available login buttons in your UI.
+ */
+async function getAvailableProviders() {
+  const res  = await fetch(AUTH_SERVICE);
+  const data = await res.json();
+  // data.services = [{ name: 'github', origin: 'github.com' }, ...]
+  return data.services.map(s => s.name);
+}
+
+// Example:
+// const providers = await getAvailableProviders();
+// // ['github', 'weibo', 'twitter', 'google', 'qq', 'huawei', 'steam']
+// providers.forEach(p => renderLoginButton(p));
+
+
+// ==============================================================================
+// Example 5: Waline Comment System Integration
+// ==============================================================================
+
+/**
+ * Waline uses User-Agent: @waline for server-phase token exchange.
+ * This example shows the server-side handler Waline calls internally.
+ *
+ * The sequence from Waline's perspective:
+ *   1. Waline's frontend redirects browser to <authService>/<provider>?redirect=<walineApi>/oauth
+ *   2. After browser callback, Waline's API receives ?code=X&state=Y
+ *   3. Waline calls <authService>/<provider>?code=X&state=Y with User-Agent: @waline
+ *   4. Auth service returns unified user JSON
+ *   5. Waline creates/updates user and issues its own JWT
+ */
+async function walineOAuthExchange({ provider, code, state, authServiceUrl = AUTH_SERVICE }) {
+  const url = new URL(`${authServiceUrl}/${provider}`);
+  url.searchParams.set('code', code);
+  url.searchParams.set('state', state);
+
+  const response = await fetch(url.toString(), {
+    method: 'GET',
+    headers: {
+      'User-Agent': '@waline',
+      'Accept':     'application/json'
     }
-  };
-  
-  const errorKey = Object.keys(errorMap).find(key => 
-    error.message.includes(key)
-  );
-  
-  const errorResponse = errorMap[errorKey] || {
-    errno: 500,
-    message: 'An error occurred during authentication'
-  };
-  
-  res.status(errorResponse.errno).json(errorResponse);
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ message: 'Unknown error' }));
+    throw Object.assign(new Error(err.message), { status: response.status, code: err.errno });
+  }
+
+  return response.json();
+  // Returns: { id, name, email, url, avatar, platform }
 }
 
+// Waline then does something like:
+// const oauthUser = await walineOAuthExchange({ provider: 'github', code, state });
+// const walineUser = await findOrCreateUser({
+//   type:     oauthUser.platform,
+//   objectId: oauthUser.id,
+//   defaults: { nick: oauthUser.name, avatar: oauthUser.avatar, email: oauthUser.email, link: oauthUser.url }
+// });
+
+
 // ==============================================================================
-// Example 6: Security Utilities
+// Example 6: Twitter / X — PKCE-Aware Flow Notes
 // ==============================================================================
 
 /**
- * Generate secure random state token
+ * Twitter uses OAuth 2.0 + PKCE with a stateless base64url-encoded state.
+ * The `state` returned in the callback is a JSON payload, NOT the plain string
+ * you passed in the `state` param — it wraps your original state plus PKCE data.
+ *
+ * On the server-phase call, pass the FULL encoded state back:
  */
-function generateState() {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  let state = '';
-  for (let i = 0; i < 32; i++) {
-    state += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return state;
+async function twitterExchange({ code, encodedState }) {
+  const url = new URL(`${AUTH_SERVICE}/twitter`);
+  url.searchParams.set('code', code);
+  url.searchParams.set('state', encodedState);  // The complete base64url state from callback
+
+  const res  = await fetch(url.toString(), { headers: { 'Accept': 'application/json' } });
+  const user = await res.json();
+
+  if (!res.ok) throw new Error(user.message || 'Twitter exchange failed');
+  return user;
 }
 
 /**
- * Validate OAuth response data
+ * Note on Twitter email:
+ * The `users.email` scope requires Twitter to review and approve your app.
+ * Until approved, the email field will be `<id>@twitter-uuid.com` (a placeholder).
  */
-function validateUserData(data) {
-  const required = ['id', 'name'];
-  const missing = required.filter(field => !data[field]);
-  
-  if (missing.length > 0) {
-    throw new Error(`Missing required fields: ${missing.join(', ')}`);
-  }
-  
-  if (typeof data.id !== 'string' || data.id.trim().length === 0) {
-    throw new Error('Invalid user ID');
-  }
-  
-  if (typeof data.name !== 'string' || data.name.trim().length === 0) {
-    throw new Error('Invalid user name');
-  }
-  
-  return true;
-}
+
+
+// ==============================================================================
+// Example 7: Steam — OpenID 2.0 Notes
+// ==============================================================================
 
 /**
- * Hash sensitive data for logging
+ * Steam uses OpenID 2.0, not OAuth. The flow differs:
+ *
+ * 1. Your frontend links to:
+ *    https://oauth.lzc2002.top/steam?redirect=<walineCallbackUrl>&state=<state>
+ *
+ * 2. The auth service constructs an openid.return_to URL that Waline will receive,
+ *    then sends the user to steamcommunity.com.
+ *
+ * 3. Steam redirects to the return_to URL with openid.* query params.
+ *    Waline (or your backend) receives these params.
+ *
+ * 4. Your backend calls the auth service:
+ *    GET https://oauth.lzc2002.top/steam?<all openid.* params>
+ *    with User-Agent: @waline
+ *
+ * 5. The service verifies the OpenID assertion with Steam and returns user JSON.
+ *
+ * Important: Steam does not provide email. The `email` field will be:
+ *   "<steamId>@steam-uuid.com"
  */
-function hashForLogging(str) {
-  if (!str) return 'N/A';
-  return str.substring(0, 3) + '*'.repeat(str.length - 6) + str.substring(-3);
+
+async function steamExchange(openIdCallbackParams) {
+  // openIdCallbackParams is the full query string from Steam's redirect
+  const url = new URL(`${AUTH_SERVICE}/steam`);
+
+  for (const [key, value] of Object.entries(openIdCallbackParams)) {
+    url.searchParams.set(key, value);
+  }
+
+  const res  = await fetch(url.toString(), { headers: { 'User-Agent': '@waline' } });
+  const user = await res.json();
+
+  if (!res.ok) throw new Error(user.message || 'Steam exchange failed');
+  return user;
 }
 
-// Example logging:
-// console.log(`User: ${userData.name}, ID: ${hashForLogging(userData.id)}`);
 
 // ==============================================================================
-// Example 7: Testing
+// Example 8: OIDC — Connecting a Generic Provider (e.g. Authentik, Keycloak)
 // ==============================================================================
 
-/*
-const assert = require('assert');
+/**
+ * Configure your OIDC provider in environment variables.
+ *
+ * For Authentik:
+ *   OIDC_ID     = <your app client ID>
+ *   OIDC_SECRET = <your app client secret>
+ *   OIDC_ISSUER = https://authentik.example.com/application/o/<slug>/
+ *
+ * For Keycloak:
+ *   OIDC_ISSUER = https://keycloak.example.com/realms/<realm>
+ *
+ * For providers without discovery (e.g. custom IdP):
+ *   OIDC_AUTH_URL      = https://idp.example.com/authorize
+ *   OIDC_TOKEN_URL     = https://idp.example.com/token
+ *   OIDC_USERINFO_URL  = https://idp.example.com/userinfo
+ *   OIDC_SCOPES        = openid profile email
+ *
+ * The OIDC provider's redirect_uri must be set to the `redirect` value your
+ * application passes — the auth service uses your app's callback URL directly
+ * as the redirect_uri, not its own /oidc path.
+ *
+ * Initiate:
+ *   GET https://oauth.lzc2002.top/oidc?redirect=<yourCallback>&state=<state>
+ *
+ * Exchange:
+ *   GET https://oauth.lzc2002.top/oidc?code=<code>&state=<encodedState>
+ *   (with User-Agent: @waline)
+ */
 
-describe('OAuth Integration', () => {
-  describe('User Creation', () => {
-    it('should create user from OAuth data', async () => {
-      const oauthData = {
-        id: 'github:12345',
-        name: 'Test User',
-        email: 'test@example.com',
-        avatar: 'https://example.com/avatar.jpg',
-        platform: 'github'
-      };
-      
-      const user = await User.create({
-        github_id: oauthData.id,
-        name: oauthData.name,
-        email: oauthData.email,
-        avatar: oauthData.avatar,
-        provider: 'github'
-      });
-      
-      assert.strictEqual(user.name, 'Test User');
-      assert.strictEqual(user.github_id, 'github:12345');
-    });
-  });
 
-  describe('User Retrieval', () => {
-    it('should find user by OAuth ID', async () => {
-      const user = await User.findOne({
-        where: { github_id: 'github:12345' }
-      });
-      
-      assert(user);
-      assert.strictEqual(user.name, 'Test User');
-    });
-  });
+// ==============================================================================
+// Example 9: React Hook — useOAuth
+// ==============================================================================
 
-  describe('Error Handling', () => {
-    it('should handle invalid state', async () => {
-      const req = {
-        query: { state: 'invalid' },
-        session: { oauth_state: 'valid' }
-      };
-      
-      assert.throws(() => {
-        if (req.query.state !== req.session.oauth_state) {
-          throw new Error('CSRF token mismatch');
-        }
-      });
-    });
-  });
-});
-*/
+// import { useState, useCallback } from 'react';
 
-module.exports = {
-  OAuthServiceClient,
-  generateState,
-  validateUserData,
-  hashForLogging,
-  handleOAuthError
-};
+function useOAuth(authServiceUrl = AUTH_SERVICE) {
+  const [user, setUser]       = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError]     = useState(null);
+
+  const login = useCallback((provider) => {
+    setLoading(true);
+    setError(null);
+
+    const state       = Math.random().toString(36).slice(2);
+    const callbackUrl = `${location.origin}/oauth-callback`;
+
+    // Save state for verification when the popup posts back
+    sessionStorage.setItem('oauth_state', state);
+
+    const authUrl = `${authServiceUrl}/${provider}`
+      + `?redirect=${encodeURIComponent(callbackUrl)}`
+      + `&state=${encodeURIComponent(state)}`;
+
+    const popup = window.open(authUrl, 'oauth', 'width=520,height=640');
+
+    const onMessage = async (event) => {
+      if (event.origin !== location.origin) return;
+      if (event.data?.type !== 'oauth_callback') return;
+      window.removeEventListener('message', onMessage);
+
+      const savedState = sessionStorage.getItem('oauth_state');
+      if (event.data.state !== savedState) {
+        setError('CSRF state mismatch');
+        setLoading(false);
+        return;
+      }
+      sessionStorage.removeItem('oauth_state');
+
+      try {
+        // Your backend endpoint that calls the auth service server-side
+        const res  = await fetch('/api/auth/exchange', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ provider, code: event.data.code, state: event.data.state })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.message || 'Exchange failed');
+        setUser(data);
+      } catch (err) {
+        setError(err.message);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    window.addEventListener('message', onMessage);
+  }, [authServiceUrl]);
+
+  const logout = useCallback(async () => {
+    await fetch('/api/auth/logout', { method: 'POST' });
+    setUser(null);
+  }, []);
+
+  return { user, loading, error, login, logout };
+}
+
+// Usage in a component:
+// function LoginButton({ provider }) {
+//   const { login, loading, error } = useOAuth();
+//   return (
+//     <button onClick={() => login(provider)} disabled={loading}>
+//       {loading ? 'Connecting…' : `Login with ${provider}`}
+//     </button>
+//   );
+// }

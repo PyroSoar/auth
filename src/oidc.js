@@ -1,8 +1,12 @@
 const Base = require('./base');
 const qs = require('querystring');
 const request = require('request-promise-native');
+const { buildPostForm } = Base;
 
-const { OIDC_ID, OIDC_SECRET, OIDC_ISSUER, OIDC_SCOPES, OIDC_AUTH_URL, OIDC_TOKEN_URL, OIDC_USERINFO_URL } = process.env;
+const {
+  OIDC_ID, OIDC_SECRET, OIDC_ISSUER, OIDC_SCOPES,
+  OIDC_AUTH_URL, OIDC_TOKEN_URL, OIDC_USERINFO_URL
+} = process.env;
 
 let discovery;
 async function getDiscovery() {
@@ -19,25 +23,20 @@ async function getDiscovery() {
     };
     return discovery;
   }
-  const url = issuer + '/.well-known/openid-configuration';
-  discovery = await request.get(url, { json: true });
+  discovery = await request.get(issuer + '/.well-known/openid-configuration', { json: true });
   return discovery;
 }
 
 module.exports = class extends Base {
   static check() {
-    if (!OIDC_ID || !OIDC_SECRET) {
-      return false;
-    }
+    if (!OIDC_ID || !OIDC_SECRET) return false;
     return OIDC_ISSUER || (OIDC_AUTH_URL && OIDC_TOKEN_URL && OIDC_USERINFO_URL);
   }
-  
+
   static info() {
-    return {
-      origin: new URL(OIDC_ISSUER || OIDC_AUTH_URL).hostname
-    };
+    return { origin: new URL(OIDC_ISSUER || OIDC_AUTH_URL).hostname };
   }
-  
+
   async redirect() {
     const { redirect, state } = this.ctx.params;
     const { authorization_endpoint } = await getDiscovery();
@@ -54,16 +53,15 @@ module.exports = class extends Base {
   async getAccessToken(code) {
     const { redirect } = this.ctx.params;
     const { token_endpoint } = await getDiscovery();
-    const params = {
-      client_id: OIDC_ID,
-      client_secret: OIDC_SECRET,
-      grant_type: 'authorization_code',
-      code,
-      redirect_uri: redirect,
-    };
     return request.post({
       url: token_endpoint,
-      form: params,
+      form: {
+        client_id: OIDC_ID,
+        client_secret: OIDC_SECRET,
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: redirect,
+      },
       json: true,
     });
   }
@@ -73,23 +71,23 @@ module.exports = class extends Base {
     const user = await request({
       url: userinfo_endpoint,
       method: 'GET',
-      headers: {
-        Authorization: `Bearer ${access_token}`,
-      },
+      headers: { Authorization: `Bearer ${access_token}` },
       json: true,
     });
+
     const rawAvatar = user.picture || user.avatar;
     const avatar = typeof rawAvatar === 'string'
-      ? rawAvatar.trim().replace(/^`+|`+$/g, '').replace(/^\"+|\"+$/g, '')
+      ? rawAvatar.trim().replace(/^`+|`+$/g, '').replace(/^"+|"+$/g, '')
       : undefined;
     const profileUrl = user.profile || user.website || (typeof user.url === 'string' ? user.url : '');
-    
+
     return await this.formatUserResponse({
       id: user.sub,
       name: user.name || user.preferred_username || user.nickname,
       email: user.email || undefined,
       url: profileUrl || undefined,
       avatar: avatar || undefined,
+      originalResponse: user
     }, 'oidc');
   }
 
@@ -98,24 +96,41 @@ module.exports = class extends Base {
     const parsed = qs.parse(_state || '');
     if ((!parsed.redirect || typeof parsed.redirect !== 'string') && this.ctx.search) {
       const search = this.ctx.search.slice(1);
-      const states = (search.match(/(?:^|&)state=([^&]*)/g) || []).map((s) => decodeURIComponent(s.split('=')[1] || ''));
+      const states = (search.match(/(?:^|&)state=([^&]*)/g) || [])
+        .map((s) => decodeURIComponent(s.split('=')[1] || ''));
       const picked = states.find((v) => v && /redirect=/.test(v)) || states.find((v) => v) || '';
-      if (picked) {
-        Object.assign(parsed, qs.parse(picked));
-      }
+      if (picked) Object.assign(parsed, qs.parse(picked));
     }
     const redirect = parsed.redirect || directRedirect;
     const state = parsed.state || '';
-    if (!code) {
-      return this.redirect();
-    }
-    if (redirect && this.ctx.headers['user-agent'] !== '@waline') {
-      const target = redirect + (redirect.includes('?') ? '&' : '?') + qs.stringify({ code, state });
-      return this.ctx.redirect(target);
-    }
+
+    if (!code) return this.redirect();
+
     this.ctx.type = 'json';
-    const accessTokenInfo = await this.getAccessToken(code);
-    const userInfo = await this.getUserInfoByToken(accessTokenInfo);
+    let userInfo;
+    try {
+      const accessTokenInfo = await this.getAccessToken(code);
+      userInfo = await this.getUserInfoByToken(accessTokenInfo);
+    } catch (error) {
+      if (redirect) {
+        const errUrl = new URL(redirect);
+        errUrl.searchParams.set('error', error.message);
+        if (state) errUrl.searchParams.set('state', state);
+        return this.ctx.redirect(errUrl.toString());
+      }
+      this.ctx.status = 500;
+      this.ctx.body = { error: error.message };
+      return;
+    }
+
+    if (redirect) {
+      const payload = { ...userInfo };
+      if (state) payload.state = state;
+      this.ctx.type = 'html';
+      this.ctx.body = buildPostForm(redirect, payload);
+      return;
+    }
+
     return this.ctx.body = userInfo;
   }
 };

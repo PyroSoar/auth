@@ -1,21 +1,21 @@
 # OAuth Center
 
-A unified OAuth authentication service deployed at **https://oauth.lzc2002.top/**. Supports [GitHub][GitHub], [Twitter/X][Twitter], [Facebook][Facebook], [Google][Google], [Weibo][Weibo], [QQ][QQ], [Huawei][Huawei], [Steam][Steam], and any [OpenID Connect (OIDC)][OIDC] provider. Designed for [Waline](https://waline.js.org) comment systems and any web application that needs third-party login with a single, consistent API.
+A unified OAuth authentication service deployed at **https://oauth.lzc2002.top/**. Supports [GitHub][GitHub], [Twitter/X][Twitter], [Facebook][Facebook], [Google][Google], [Weibo][Weibo], [QQ][QQ], [Huawei][Huawei], [Steam][Steam], and any [OpenID Connect (OIDC)][OIDC] provider. Designed for [Waline](https://waline.js.org) comment systems and any web application that needs third-party login.
 
 ## ✨ Key Features
 
 - 🔐 **9 Providers** — GitHub, Google, QQ, Facebook, Weibo, Twitter/X, Huawei, Steam, OIDC
-- 🎯 **Unified Response Format** — All platforms return an identical JSON structure
+- 🎯 **Unified Response Format** — All platforms deliver an identical JSON structure
+- ⚡ **True One-Phase Flow** — The service completes the full token exchange; your callback receives user data immediately
+- 📬 **POST Body Delivery** — User data is delivered via HTTP POST (not URL query params), keeping sensitive fields out of browser history and server logs
 - ✅ **Data Validation & Normalization** — Every response is validated before delivery
-- 💾 **Optional DB Persistence** — Background upsert of user info into PostgreSQL (`wl_3rd_info` table)
-- 🔒 **PKCE Support** — Twitter/X uses PKCE (RFC 7636) for enhanced security; no server-side session needed
+- 💾 **Optional DB Persistence** — Background upsert into PostgreSQL (`wl_3rd_info`)
+- 🔒 **PKCE Support** — Twitter/X uses PKCE (RFC 7636)
 - 🚀 **Serverless Ready** — One-click deploy to Vercel
 
 ## Live Service
 
-The public instance runs at **https://oauth.lzc2002.top/**.
-
-`GET /` returns the service version and every currently-active provider:
+`GET https://oauth.lzc2002.top/` returns the service version and active providers:
 
 ```json
 {
@@ -32,150 +32,116 @@ The public instance runs at **https://oauth.lzc2002.top/**.
 }
 ```
 
-A provider only appears when its required environment variables are configured. Facebook and OIDC are implemented but not active on the public instance.
+## How It Works
 
-## Unified Response Format
+### One-Phase Flow
 
-All providers return user data in this structure:
+```
+1. Your app  →  GET https://oauth.lzc2002.top/<provider>?redirect=<yourCallback>&state=<csrf>
+2. Service   →  Redirects browser to provider login page
+3. Provider  →  Redirects back to service (invisible to your app)
+4. Service   →  Exchanges code, fetches user profile, validates data
+5. Service   →  Serves an auto-submitting HTML form that POSTs user data to <yourCallback>
+6. Browser   →  POSTs to <yourCallback> — your app receives user data as a JSON body
+```
+
+### Why POST instead of redirect?
+
+User data (name, email, avatar URL) would otherwise appear in the browser's URL bar, history, and server access logs. The service instead serves a tiny self-submitting HTML form that immediately POSTs the payload to your callback endpoint — the data never touches the URL.
+
+### What your callback receives
+
+Your callback endpoint receives a standard `application/x-www-form-urlencoded` POST body:
+
+```
+id=<id>&name=<name>&email=<email>&url=<url>&avatar=<avatar>&platform=<platform>&state=<csrf>
+```
+
+Parse it exactly like any other HTML form submission. In Express:
+
+```js
+app.use(express.urlencoded({ extended: false }));
+
+app.post('/auth/callback/:provider', (req, res) => {
+  const { id, name, email, url, avatar, platform, state } = req.body;
+  // verify state, then use the data
+});
+```
+
+### Error delivery
+
+On error, the service POSTs `error=<message>&state=<csrf>` to your callback. Check for the `error` field first.
+
+### Server-to-server (no redirect)
+
+Omit the `redirect` parameter entirely. The service returns a JSON body directly:
 
 ```json
-{
-  "id": "platform-uuid",
-  "name": "Display Name",
-  "email": "user@example.com",
-  "url": "https://profile-url",
-  "avatar": "https://avatar-url",
-  "platform": "github"
-}
+{ "id": "...", "name": "...", "email": "...", "url": "...", "avatar": "...", "platform": "..." }
 ```
+
+## Unified Response Fields
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `id` | string | ✅ | Unique identifier from the provider |
 | `name` | string | ✅ | Display name or username |
-| `email` | string | ❌ | Omitted if unavailable; QQ, Twitter, Steam use a synthesized placeholder |
+| `email` | string | ❌ | May be a synthesized placeholder for QQ, Twitter, Steam |
 | `url` | string | ❌ | Profile page URL |
-| `avatar` | string | ❌ | Avatar URL or base64 data URI (Weibo) |
-| `platform` | string | ❌ | Provider key: `github` `google` `qq` `facebook` `weibo` `twitter` `huawei` `steam` `oidc` |
-
-Error responses follow:
-
-```json
-{ "errno": 400, "message": "Descriptive error message" }
-```
+| `avatar` | string | ❌ | Avatar URL, or base64 data URI for Weibo |
+| `platform` | string | ❌ | `github` `google` `qq` `facebook` `weibo` `twitter` `huawei` `steam` `oidc` |
+| `state` | string | ❌ | Your original CSRF token, returned verbatim |
 
 ## Deploy Your Own
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/import/project?template=https://github.com/walinejs/auth)
 
-Or run locally:
-
 ```bash
 git clone https://github.com/walinejs/auth.git
-cd auth
-npm install
-npm start    # http://localhost:3000
+cd auth && npm install && npm start
 ```
 
 ## Environment Variables
 
-Only set the variables for providers you want to enable. Unset providers are silently skipped.
-
 ```env
-# Optional — overrides auto-detected server base URL
-SERVER_URL=https://oauth.lzc2002.top
+SERVER_URL=https://oauth.lzc2002.top   # Optional — override auto-detected base URL
+POSTGRES_URL=postgres://...             # Optional — enables background DB upsert
 
-# Optional — Vercel Postgres connection string
-# Enables background upsert into the wl_3rd_info table
-POSTGRES_URL=postgres://...
+GITHUB_ID=...   GITHUB_SECRET=...
+GOOGLE_ID=...   GOOGLE_SECRET=...
+QQ_ID=...       QQ_SECRET=...
+FACEBOOK_ID=... FACEBOOK_SECRET=...
+WEIBO_ID=...    WEIBO_SECRET=...
+TWITTER_ID=...  TWITTER_SECRET=...     # OAuth 2.0 + PKCE app
+HUAWEI_ID=...   HUAWEI_SECRET=...
+STEAM_KEY=...                           # No secret needed (OpenID 2.0)
 
-# ── GitHub ──────────────────────────────────────────────────────────
-# https://github.com/settings/oauth-apps
-GITHUB_ID=your_github_client_id
-GITHUB_SECRET=your_github_client_secret
-
-# ── Google ──────────────────────────────────────────────────────────
-# https://console.cloud.google.com/ → APIs & Services → Credentials
-GOOGLE_ID=your_client_id.apps.googleusercontent.com
-GOOGLE_SECRET=your_google_client_secret
-
-# ── QQ ──────────────────────────────────────────────────────────────
-# https://connect.qq.com/
-QQ_ID=your_qq_app_id
-QQ_SECRET=your_qq_app_secret
-
-# ── Facebook ────────────────────────────────────────────────────────
-# https://developers.facebook.com/apps/
-FACEBOOK_ID=your_facebook_app_id
-FACEBOOK_SECRET=your_facebook_app_secret
-
-# ── Weibo ───────────────────────────────────────────────────────────
-# https://open.weibo.com/
-WEIBO_ID=your_weibo_app_id
-WEIBO_SECRET=your_weibo_app_secret
-
-# ── Twitter / X ─────────────────────────────────────────────────────
-# https://developer.twitter.com/en/portal/dashboard
-# Must be an OAuth 2.0 app (not 1.0a), with PKCE enabled
-TWITTER_ID=your_twitter_client_id
-TWITTER_SECRET=your_twitter_client_secret
-
-# ── Huawei ──────────────────────────────────────────────────────────
-# https://developer.huawei.com/consumer/en/agconnect/auth-service/
-HUAWEI_ID=your_huawei_client_id
-HUAWEI_SECRET=your_huawei_client_secret
-
-# ── Steam ───────────────────────────────────────────────────────────
-# https://steamcommunity.com/dev/apikey
-STEAM_KEY=your_steam_web_api_key
-
-# ── OIDC (Generic OpenID Connect) ───────────────────────────────────
-OIDC_ID=your_oidc_client_id
-OIDC_SECRET=your_oidc_client_secret
-# Option A — issuer URL (auto-discovers /.well-known/openid-configuration)
+# OIDC — either issuer (for auto-discovery) or explicit endpoints
+OIDC_ID=...     OIDC_SECRET=...
 OIDC_ISSUER=https://your-provider.example.com
-# Option B — explicit endpoints (if discovery is unavailable)
-# OIDC_AUTH_URL=https://your-provider.example.com/authorize
-# OIDC_TOKEN_URL=https://your-provider.example.com/token
-# OIDC_USERINFO_URL=https://your-provider.example.com/userinfo
-# Optional: space-separated scopes (default: "openid profile email")
+# OIDC_AUTH_URL=...  OIDC_TOKEN_URL=...  OIDC_USERINFO_URL=...
 # OIDC_SCOPES=openid profile email
 ```
 
-## Provider Quick Reference
+## Provider Notes
 
-| Provider | Redirect URL | Notes |
-|---|---|---|
-| GitHub | `/<server>/github?redirect=<cb>&state=<s>` | Fetches email separately if not public |
-| Google | `/<server>/google?redirect=<cb>&state=<s>` | Requests `userinfo.email` + `userinfo.profile` |
-| QQ | `/<server>/qq?redirect=<cb>&state=<s>` | Uses `unionid` when available, else `openid` |
-| Facebook | `/<server>/facebook?redirect=<cb>&state=<s>` | Requests `id,name,email,picture,link` |
-| Weibo | `/<server>/weibo?redirect=<cb>&state=<s>` | No email; avatar returned as base64 |
-| Twitter/X | `/<server>/twitter?redirect=<cb>&state=<s>` | OAuth 2.0 + PKCE; state is base64url-encoded |
-| Huawei | `/<server>/huawei?redirect=<cb>&state=<s>` | User info from `id_token` JWT |
-| Steam | `/<server>/steam?redirect=<cb>&state=<s>` | OpenID 2.0; no email provided |
-| OIDC | `/<server>/oidc?redirect=<cb>&state=<s>` | Supports auto-discovery |
+**Weibo** — No email. Avatar is a base64 data URI (can be several hundred KB).
 
-## Two-Phase Callback Flow
+**Twitter/X** — PKCE with SHA-256. Email requires `users.email` scope approval; falls back to `<id>@twitter-uuid.com`.
 
-Most providers follow this pattern:
+**Steam** — OpenID 2.0, not OAuth. Service sets `openid.return_to` to itself, completes verification internally, then POSTs to your callback. Your app never sees any `openid.*` params.
 
-**Browser phase** — OAuth provider redirects back to this service. If a `redirect` parameter is present, the service appends `?code=<code>&state=<state>` to that URL and sends the browser there. Your application then holds the `code`.
+**Huawei** — User info from JWT `id_token`. Uses an in-memory state bridge (10-min TTL); multi-instance deployments need a shared store.
 
-**Server phase** — Your server calls this service again with `code` (and no `redirect`), or sends `User-Agent: @waline` / `Accept: application/json`. The service exchanges the code for a token, fetches user info, and returns the unified JSON.
-
-```
-Browser: Provider ──▶ oauth.lzc2002.top/<provider> ──▶ yourapp?code=X&state=Y ──▶ Your UI
-Server:  Your backend ──▶ GET oauth.lzc2002.top/<provider>?code=X ──▶ JSON user object
-```
-
-See [TECHNICAL_GUIDE.md](./TECHNICAL_GUIDE.md) for per-provider flow diagrams and edge cases.
+**QQ** — No email; placeholder `<openid>@qq-uuid.com`. Prefers `unionid` over `openid`.
 
 ## Complete Documentation
 
-📖 **[Technical Guide](./TECHNICAL_GUIDE.md)** — Full platform setup, flow diagrams, API reference, error codes, and database schema.
+📖 **[Technical Guide](./TECHNICAL_GUIDE.md)** — Full platform setup, POST delivery details, API reference, database schema.
 
-💡 **[Integration Examples](./INTEGRATION_EXAMPLES.js)** — Ready-to-use code for Express.js, Next.js, vanilla browser JS, and Waline.
+💡 **[Integration Examples](./INTEGRATION_EXAMPLES.js)** — Ready-to-use code for Express.js, Next.js, and browser JS.
+
+🔄 **[Migration Guide](./MIGRATION.md)** — Upgrading from URL query param delivery to POST body delivery.
 
 [GitHub]: https://github.com/settings/oauth-apps
 [Twitter]: https://developer.twitter.com/

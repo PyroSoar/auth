@@ -1,71 +1,6 @@
-const { createUserResponse, createErrorResponse } = require('./utils');
+const { createUserResponse,createErrorResponse } = require('./utils');
 const qs = require('querystring');
 const storage = require('./utils/storage/db');
-
-/**
- * Escape a string for safe use inside HTML attribute values.
- */
-function escHtml(str) {
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/"/g, '&quot;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-}
-
-/**
- * Build a self-submitting HTML form that POSTs `fields` to `action`.
- * Used to deliver user data to the client callback without putting it in the URL.
- * Exported so provider modules can import it instead of redeclaring locally.
- */
-function buildPostForm(action, fields) {
-  const inputs = Object.entries(fields)
-    .filter(([, v]) => v !== undefined && v !== null)
-    .map(([k, v]) =>
-      `<input type="hidden" name="${escHtml(k)}" value="${escHtml(String(v))}">`
-    )
-    .join('\n    ');
-
-  return `<!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"><title>Redirecting…</title></head>
-<body>
-<form id="f" method="POST" action="${escHtml(action)}">
-    ${inputs}
-</form>
-<script>document.getElementById('f').submit();</script>
-</body>
-</html>`;
-}
-
-/**
- * Fetch an image URL and return it as a base64 data URI.
- * Sends a spoofed Referer so providers that use hotlink protection
- * (e.g. Weibo) serve the image to server-side requests.
- *
- * @param {string} url        - Image URL to fetch
- * @param {string} [referer]  - Referer header value (defaults to the image origin)
- * @returns {Promise<string|null>} base64 data URI, or null on failure
- */
-async function fetchAvatarAsBase64(url, referer) {
-  if (!url) return null;
-  try {
-    const ref = referer || new URL(url).origin;
-    const res = await fetch(url, {
-      headers: {
-        'Referer': ref,
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-      }
-    });
-    if (!res.ok) return null;
-    const buffer = Buffer.from(await res.arrayBuffer());
-    const mime = res.headers.get('content-type') || 'image/jpeg';
-    return `data:${mime};base64,${buffer.toString('base64')}`;
-  } catch (err) {
-    console.error('[base] fetchAvatarAsBase64 failed:', err.message);
-    return null;
-  }
-}
 
 module.exports = class {
   constructor(ctx) {
@@ -88,9 +23,13 @@ module.exports = class {
       }
     }
 
+    // Construct response
     const response = createUserResponse(userInfo, platform);
     const result = response.get ? response.get() : response;
+
+    // THIS LOG MUST APPEAR
     console.log('[base] Returning response data:', JSON.stringify(result));
+    
     return result;
   }
 
@@ -104,20 +43,21 @@ module.exports = class {
   }
 
   async getUserInfo() {
+    const qs = require('querystring');
     const code = this.ctx.params?.code || this.ctx.query?.code;
-
-    // Step 1: No code — initial entry, redirect browser to provider
+    // Step 1: If no code, this is the initial OAuth entry → redirect to provider
     if (!code) {
       console.log('[Base.getUserInfo] No code found, redirecting to authorize()...');
       return this.redirect();
     }
 
-    // Step 2: Extract redirect and inner state from params or encoded state
+    // Step 2: Extract redirect and inner state from the encoded state string
     let redirect = this.ctx.query?.redirect || this.ctx.params?.redirect;
     let state = this.ctx.query?.state || this.ctx.params?.state;
     if (!redirect && state) {
       try {
         const parsed = qs.parse(state);
+
         if (parsed.redirect) {
           redirect = parsed.redirect;
           console.log('[Base.getUserInfo] Extracted redirect from state:', redirect);
@@ -126,35 +66,51 @@ module.exports = class {
           state = parsed.state;
           console.log('[Base.getUserInfo] Extracted inner state:', state);
         }
+
+        if (parsed.type) {
+          // Preserve platform type (weibo/google/etc.)
+          console.log('[Base.getUserInfo] Extracted type from state:', parsed.type);
+          // We will append this later to the final redirect URL
+        }
+
       } catch (err) {
         console.error('[Base.getUserInfo] Failed to parse state:', state, err.message);
       }
     }
 
-    // Step 3: Normalize redirect to a full URL
+    // Step 3: Normalize redirect into a full URL
     let finalRedirect = redirect;
     if (redirect) {
       if (redirect.startsWith('http')) {
         finalRedirect = redirect;
+        console.log('[Base.getUserInfo] Redirect is full URL:', finalRedirect);
       } else if (redirect.startsWith('/')) {
         finalRedirect = this.getCompleteUrl(redirect);
+        console.log('[Base.getUserInfo] Redirect is relative path, completed to:', finalRedirect);
       } else {
         finalRedirect = this.getCompleteUrl('/' + redirect);
+        console.log('[Base.getUserInfo] Redirect is plain string, completed to:', finalRedirect);
       }
-      console.log('[Base.getUserInfo] Final redirect:', finalRedirect);
+    } else {
+      console.log('[Base.getUserInfo] No redirect provided.');
     }
 
-    // Step 4: One-phase — exchange code, fetch user info
+    // Step 4: One-phase flow — always exchange code for user info here,
+    // then either redirect the browser with the result or return JSON directly.
     this.ctx.type = 'json';
     let userInfo;
     try {
       console.log('[Base.getUserInfo] Fetching access token...');
       const accessTokenInfo = await this.getAccessToken(code);
+      console.log('[Base.getUserInfo] Access token info:', accessTokenInfo);
+
       console.log('[Base.getUserInfo] Fetching user info...');
       userInfo = await this.getUserInfoByToken(accessTokenInfo);
+      console.log('[Base.getUserInfo] User info:', userInfo);
     } catch (error) {
       console.error('[Base.getUserInfo] Error exchanging code:', error.message);
       if (finalRedirect) {
+        // Redirect client with error info so they can handle it gracefully
         try {
           const errUrl = new URL(finalRedirect);
           errUrl.searchParams.set('error', error.message);
@@ -167,23 +123,27 @@ module.exports = class {
       return;
     }
 
-    // Step 5: Deliver result — POST form to client callback, or JSON for server calls
+    // If a redirect URL was provided, send the browser there with user data as query params
     if (finalRedirect) {
-      const payload = { ...userInfo };
-      if (state) payload.state = state;
-      console.log('[Base.getUserInfo] One-phase: POSTing user info to:', finalRedirect);
-      this.ctx.type = 'html';
-      this.ctx.body = buildPostForm(finalRedirect, payload);
-      return;
+      try {
+        const url = new URL(finalRedirect);
+        // Embed the full user object as individual query params
+        for (const [key, value] of Object.entries(userInfo)) {
+          if (value !== undefined && value !== null) {
+            url.searchParams.set(key, String(value));
+          }
+        }
+        if (state) url.searchParams.set('state', state);
+        console.log('[Base.getUserInfo] One-phase: Redirecting client with user info:', url.toString());
+        return this.ctx.redirect(url.toString());
+      } catch (err) {
+        console.error('[Base.getUserInfo] Invalid redirect URL:', finalRedirect, err.message);
+      }
     }
 
-    // No redirect — server-to-server call, return JSON directly
+    // No redirect — return JSON directly (server-to-server call)
     return this.ctx.body = userInfo;
   }
-};
 
-// Attach shared helpers so provider modules can import from a single place:
-//   const Base = require('./base');
-//   const { buildPostForm, fetchAvatarAsBase64 } = Base;
-module.exports.buildPostForm      = buildPostForm;
-module.exports.fetchAvatarAsBase64 = fetchAvatarAsBase64;
+
+};

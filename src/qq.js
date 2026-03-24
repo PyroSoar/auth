@@ -2,26 +2,20 @@ const Base = require('./base');
 const qs = require('querystring');
 const request = require('request-promise-native');
 
-const OAUTH_URL = 'https://graph.qq.com/oauth2.0/authorize';
+const OAUTH_URL      = 'https://graph.qq.com/oauth2.0/authorize';
 const ACCESS_TOKEN_URL = 'https://graph.qq.com/oauth2.0/token';
 const TOKEN_INFO_URL = 'https://graph.qq.com/oauth2.0/me';
-const USER_INFO_URL = 'https://graph.qq.com/user/get_user_info';
+const USER_INFO_URL  = 'https://graph.qq.com/user/get_user_info';
 
 const { QQ_ID, QQ_SECRET } = process.env;
 
 module.exports = class extends Base {
-  static check() {
-    return QQ_ID && QQ_SECRET;
-  }
-
-  static info() {
-    return { origin: new URL(OAUTH_URL).hostname };
-  }
+  static check() { return QQ_ID && QQ_SECRET; }
+  static info()  { return { origin: new URL(OAUTH_URL).hostname }; }
 
   redirect() {
     const { redirect, state } = this.ctx.params;
     const redirectUrl = this.getCompleteUrl('/qq') + '?' + qs.stringify({ redirect, state });
-
     const url = OAUTH_URL + '?' + qs.stringify({
       client_id: QQ_ID,
       redirect_uri: redirectUrl,
@@ -34,18 +28,16 @@ module.exports = class extends Base {
     const { redirect, state } = this.ctx.params;
     const redirectUrl = this.getCompleteUrl('/qq') + '?' + qs.stringify({ redirect, state });
 
-    const params = {
-      client_id: QQ_ID,
-      client_secret: QQ_SECRET,
-      grant_type: 'authorization_code',
-      redirect_uri: redirectUrl,
-      code,
-      fmt: 'json'
-    };
-
     const response = await request.post({
       url: ACCESS_TOKEN_URL,
-      form: params,
+      form: {
+        client_id: QQ_ID,
+        client_secret: QQ_SECRET,
+        grant_type: 'authorization_code',
+        redirect_uri: redirectUrl,
+        code,
+        fmt: 'json'
+      },
       json: true
     });
 
@@ -92,26 +84,14 @@ module.exports = class extends Base {
       throw err;
     }
 
-    // 保证返回的用户信息一定有 id
     return await this.formatUserResponse({
-      id: tokenInfo.unionid || tokenInfo.openid, // 优先 unionid，没有就用 openid
+      id: tokenInfo.unionid || tokenInfo.openid,
       name: userInfo.nickname || 'QQ User',
       email: userInfo.email || `${tokenInfo.openid}@qq-uuid.com`,
       url: undefined,
-      avatar: userInfo.figureurl_qq_2 || userInfo.figureurl_qq_1 || userInfo.figureurl_qq || userInfo.figureurl_2 || userInfo.figureurl_1 || userInfo.figureurl || '',
+      avatar: userInfo.figureurl_qq_2 || userInfo.figureurl_qq_1 || userInfo.figureurl_qq
+           || userInfo.figureurl_2    || userInfo.figureurl_1    || userInfo.figureurl || undefined,
+      originalResponse: { tokenInfo, userInfo }
     }, 'qq');
-  }
-
-  async indexAction() {
-    const { code } = this.ctx.params;
-    if (!code) {
-      return this.redirect();
-    }
-
-    const accessTokenInfo = await this.getAccessToken(code);
-    const userInfo = await this.getUserInfoByToken(accessTokenInfo);
-
-    this.ctx.type = 'json';
-    this.ctx.body = userInfo;
   }
 };

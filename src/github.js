@@ -20,10 +20,12 @@ module.exports = class extends Base {
   }
   
   async getAccessToken(code) {
+    const {redirect, state} = this.ctx.params;
     const params = {
       client_id: GITHUB_ID,
       client_secret: GITHUB_SECRET,
-      code
+      code,
+      redirect_uri: this.getCompleteUrl('/github') + '?' + qs.stringify({redirect, state})
     };
 
     return request.post({

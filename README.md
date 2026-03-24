@@ -1,10 +1,10 @@
 # OAuth Center
 
-A unified OAuth authentication service deployed at **https://oauth.lzc2002.top/**. Supports [GitHub][GitHub], [Twitter/X][Twitter], [Facebook][Facebook], [Google][Google], [Weibo][Weibo], [QQ][QQ], [Huawei][Huawei], [Steam][Steam], and any [OpenID Connect (OIDC)][OIDC] provider. Designed for [Waline](https://waline.js.org) comment systems and any web application that needs third-party login.
+A unified OAuth authentication service deployed at **https://oauth.lzc2002.top/**. Supports [GitHub][GitHub], [Twitter/X][Twitter], [Facebook][Facebook], [Google][Google], [Weibo][Weibo], [QQ][QQ], [Huawei][Huawei], [Steam][Steam], [Microsoft][Microsoft], and any [OpenID Connect (OIDC)][OIDC] provider. Designed for [Waline](https://waline.js.org) comment systems and any web application that needs third-party login.
 
 ## ✨ Key Features
 
-- 🔐 **9 Providers** — GitHub, Google, QQ, Facebook, Weibo, Twitter/X, Huawei, Steam, OIDC
+- 🔐 **12 Providers** — GitHub, Google, QQ, Facebook, Weibo, Twitter/X, Huawei, Steam, OIDC, Microsoft (Consumers), Microsoft (Tenant), Microsoft (Common)
 - 🎯 **Unified Response Format** — All platforms deliver an identical JSON structure
 - ⚡ **True One-Phase Flow** — The service completes the full token exchange; your callback receives user data immediately
 - 📬 **POST Body Delivery** — User data is delivered via HTTP POST (not URL query params), keeping sensitive fields out of browser history and server logs
@@ -89,15 +89,15 @@ Omit the `redirect` parameter entirely. The service returns a JSON body directly
 | `email` | string | ❌ | May be a synthesized placeholder for QQ, Twitter, Steam |
 | `url` | string | ❌ | Profile page URL |
 | `avatar` | string | ❌ | Avatar URL, or base64 data URI for Weibo |
-| `platform` | string | ❌ | `github` `google` `qq` `facebook` `weibo` `twitter` `huawei` `steam` `oidc` |
+| `platform` | string | ❌ | `github` `google` `qq` `facebook` `weibo` `twitter` `huawei` `steam` `oidc` `microsoft-consumers` `microsoft-tenant` `microsoft-common` |
 | `state` | string | ❌ | Your original CSRF token, returned verbatim |
 
 ## Deploy Your Own
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/import/project?template=https://github.com/walinejs/auth)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/import/project?template=https://github.com/pyrosoar/auth)
 
 ```bash
-git clone https://github.com/walinejs/auth.git
+git clone https://github.com/pyrosoar/auth.git
 cd auth && npm install && npm start
 ```
 
@@ -115,6 +115,10 @@ WEIBO_ID=...    WEIBO_SECRET=...
 TWITTER_ID=...  TWITTER_SECRET=...     # OAuth 2.0 + PKCE app
 HUAWEI_ID=...   HUAWEI_SECRET=...
 STEAM_KEY=...                           # No secret needed (OpenID 2.0)
+
+# Microsoft
+MS_client_Id=...   MS_client_secret=...  # Required for both endpoints
+MS_tenant_Id=...                        # Required for /microsoft-tenant endpoint
 
 # OIDC — either issuer (for auto-discovery) or explicit endpoints
 OIDC_ID=...     OIDC_SECRET=...
@@ -135,15 +139,26 @@ OIDC_ISSUER=https://your-provider.example.com
 
 **QQ** — No email; placeholder `<openid>@qq-uuid.com`. Prefers `unionid` over `openid`.
 
+**Microsoft** — Three endpoints:
+- `/microsoft-consumers`: For personal Microsoft accounts (Outlook.com, Hotmail, etc.)
+- `/microsoft-tenant`: For Azure AD organizational accounts (requires `MS_tenant_Id`)
+- `/microsoft-common`: For both personal and organizational accounts (recommended for most use cases)
+
+**When to use each endpoint:**
+- Use `/microsoft-common` if you want to support both personal and work/school accounts
+- Use `/microsoft-consumers` if you only want to allow personal Microsoft accounts
+- Use `/microsoft-tenant` if you only want to allow accounts from a specific Azure AD tenant
+
+All endpoints use the Microsoft Graph API for user profile information. For more details, see the [Microsoft Entra ID documentation](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow).
+
 ## Complete Documentation
 
 📖 **[Technical Guide](./TECHNICAL_GUIDE.md)** — Full platform setup, POST delivery details, API reference, database schema.
 
 💡 **[Integration Examples](./INTEGRATION_EXAMPLES.js)** — Ready-to-use code for Express.js, Next.js, and browser JS.
 
-🔄 **[Migration Guide](./MIGRATION.md)** — Upgrading from URL query param delivery to POST body delivery.
 
-[GitHub]: https://github.com/settings/oauth-apps
+[GitHub]: https://github.com/settings/developers
 [Twitter]: https://developer.twitter.com/
 [Facebook]: https://developers.facebook.com/
 [Google]: https://console.cloud.google.com/
@@ -152,3 +167,4 @@ OIDC_ISSUER=https://your-provider.example.com
 [Huawei]: https://developer.huawei.com/
 [Steam]: https://steamcommunity.com/dev/apikey
 [OIDC]: https://openid.net/connect/
+[Microsoft]: https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade/

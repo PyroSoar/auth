@@ -11,6 +11,12 @@ if (rawUrl) {
   });
 }
 
+// In-memory store for tracking used OAuth codes and their results
+const inMemoryStore = {
+  usedCodes: new Set(),
+  codeResults: new Map(),
+};
+
 async function upsertThirdPartyInfo(platform, user) {
   if (!pool) return true;
   try {
@@ -40,34 +46,20 @@ async function upsertThirdPartyInfo(platform, user) {
 }
 
 async function claimOAuthCode(code) {
-  if (!pool) return true;
-  try {
-    // Attempt to insert the code. If it already exists, this throws an error.
-    await pool.query(
-      'INSERT INTO oauth_locks (code) VALUES ($1)',
-      [code]
-    );
-    return true; // Successfully claimed
-  } catch (err) {
-    // Error code 23505 is PostgreSQL's Unique Violation
-    if (err.code === '23505') return false; 
-    throw err;
+  // Use in-memory store for all environments
+  if (inMemoryStore.usedCodes.has(code)) {
+    return false;
   }
+  inMemoryStore.usedCodes.add(code);
+  return true;
 }
 async function saveOAuthResult(code, result) {
-  if (!pool) return;
-  await pool.query(
-    'UPDATE oauth_locks SET result = $2 WHERE code = $1',
-    [code, JSON.stringify(result)]
-  );
+  // Use in-memory store for all environments
+  inMemoryStore.codeResults.set(code, JSON.stringify(result));
 }
 async function getOAuthResult(code) {
-  if (!pool) return null;
-  const { rows } = await pool.query(
-    'SELECT result FROM oauth_locks WHERE code = $1',
-    [code]
-  );
-  return rows[0]?.result || null;
+  // Use in-memory store for all environments
+  return inMemoryStore.codeResults.get(code) || null;
 }
 
 module.exports = {

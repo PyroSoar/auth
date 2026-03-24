@@ -161,7 +161,7 @@ Delivered as `application/x-www-form-urlencoded`:
 | `email` | string | ❌ | May be a synthesized placeholder |
 | `url` | string | ❌ | Profile page URL |
 | `avatar` | string | ❌ | Image URL or base64 data URI (Weibo) |
-| `platform` | string | ❌ | `github` `google` `qq` `facebook` `weibo` `twitter` `huawei` `steam` `oidc` |
+| `platform` | string | ✅ | `github` `google` `qq` `facebook` `weibo` `twitter` `huawei` `steam` `oidc` `microsoft-consumers` `microsoft-tenant` `microsoft-common` |
 | `state` | string | ❌ | Your original CSRF token, returned verbatim |
 | `error` | string | ❌ | Present only on failure; check this first |
 
@@ -174,7 +174,7 @@ Delivered as `application/x-www-form-urlencoded`:
   "email":    "string|undefined",
   "url":      "string|undefined",
   "avatar":   "string|undefined",
-  "platform": "string"
+  "platform": "string" // github, google, qq, facebook, weibo, twitter, huawei, steam, oidc, microsoft-consumers, microsoft-tenant, microsoft-common
 }
 ```
 
@@ -225,6 +225,8 @@ npm install -g vercel && vercel
 | `OIDC_ISSUER` | For OIDC | Issuer URL for auto-discovery |
 | `OIDC_AUTH_URL` / `OIDC_TOKEN_URL` / `OIDC_USERINFO_URL` | For OIDC | Explicit endpoints (if no issuer) |
 | `OIDC_SCOPES` | No | Scopes (default: `openid profile email`) |
+| `MS_client_Id` / `MS_client_secret` | For Microsoft | Application credentials (required for all Microsoft endpoints) |
+| `MS_tenant_Id` | For Microsoft Tenant | Azure AD tenant ID (required only for tenant endpoint) |
 
 ---
 
@@ -232,7 +234,7 @@ npm install -g vercel && vercel
 
 ### GitHub
 
-**Registration:** https://github.com/settings/oauth-apps  
+**Registration:** https://github.com/settings/developers
 **Callback URL to register:** `https://oauth.lzc2002.top/github`  
 **Scopes:** `read:user,user:email`
 
@@ -242,7 +244,7 @@ If the user's email is not public, a second request to `/user/emails` is made au
 
 ### Google
 
-**Registration:** https://console.cloud.google.com/ → Credentials  
+**Registration:** https://console.cloud.google.com/auth/overview → Credentials  
 **Redirect URI to register:** `https://oauth.lzc2002.top/google`  
 **Scopes:** `userinfo.email`, `userinfo.profile` (with `access_type=offline`, `prompt=consent`)
 
@@ -330,6 +332,37 @@ Supports auto-discovery via `OIDC_ISSUER` (fetches `/.well-known/openid-configur
 Userinfo claim mapping: `sub`→`id`, `name`/`preferred_username`/`nickname`→`name`, `email`→`email`, `profile`/`website`/`url`→`url`, `picture`/`avatar`→`avatar`.
 
 The `redirect_uri` sent to the OIDC provider is the client's `redirect` param — whitelist it in your OIDC provider's allowed redirect URIs.
+
+---
+
+### Microsoft
+
+**Registration:** https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade/ → App registrations 
+ 
+**Callback URL to register:** `https://oauth.lzc2002.top/microsoft-consumers` (for personal accounts), `https://oauth.lzc2002.top/microsoft-tenant` (for organizational accounts), or `https://oauth.lzc2002.top/microsoft-common` (for both account types)  
+**Scopes:** `openid profile email User.Read`
+
+#### Microsoft Consumers (Personal Accounts)
+- **Endpoint:** `/microsoft-consumers`
+- **Environment variables:** `MS_client_Id`, `MS_client_secret`
+- **Use case:** For personal Microsoft accounts (Outlook.com, Hotmail, etc.)
+
+#### Microsoft Tenant (Organizational Accounts)
+- **Endpoint:** `/microsoft-tenant`
+- **Environment variables:** `MS_client_Id`, `MS_client_secret`, `MS_tenant_Id`
+- **Use case:** For Azure AD organizational accounts
+
+#### Microsoft Common (Both Account Types)
+- **Endpoint:** `/microsoft-common`
+- **Environment variables:** `MS_client_Id`, `MS_client_secret`
+- **Use case:** For both personal and organizational accounts (recommended for most use cases)
+
+**When to use each endpoint:**
+- Use `/microsoft-common` if you want to support both personal and work/school accounts
+- Use `/microsoft-consumers` if you only want to allow personal Microsoft accounts
+- Use `/microsoft-tenant` if you only want to allow accounts from a specific Azure AD tenant
+
+All endpoints use the Microsoft Graph API to fetch user profile information. For more details, see the [Microsoft Entra ID documentation](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow).
 
 ---
 
@@ -422,10 +455,7 @@ CREATE TABLE wl_3rd_info (
   PRIMARY KEY (platform, id)
 );
 
-CREATE TABLE oauth_locks (
-  code   TEXT PRIMARY KEY,
-  result JSONB
-);
+
 ```
 
 ---

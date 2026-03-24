@@ -21,19 +21,107 @@ function escHtml(str) {
 function buildPostForm(action, fields) {
   const inputs = Object.entries(fields)
     .filter(([, v]) => v !== undefined && v !== null)
-    .map(([k, v]) =>
-      `<input type="hidden" name="${escHtml(k)}" value="${escHtml(String(v))}">`
-    )
+    .map(([k, v]) => {
+      let value = v;
+      if (typeof v === 'object') {
+        value = JSON.stringify(v);
+      }
+      return `<input type="hidden" name="${escHtml(k)}" value="${escHtml(String(value))}">`;
+    })
     .join('\n    ');
+
+  const userName = fields.name || '';
 
   return `<!DOCTYPE html>
 <html>
-<head><meta charset="utf-8"><title>Redirecting…</title></head>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Redirecting…</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            min-height: 100vh;
+            min-height: 100dvh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 16px;
+        }
+        .container {
+            text-align: center;
+            padding: 32px 24px;
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            width: 100%;
+            max-width: 360px;
+        }
+        .spinner {
+            width: 48px;
+            height: 48px;
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        h1 {
+            font-size: 20px;
+            color: #333;
+            margin-bottom: 12px;
+            line-height: 1.4;
+            word-break: break-word;
+        }
+        .name {
+            color: #667eea;
+            font-weight: 600;
+        }
+        p {
+            color: #666;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+        .redirect-hint {
+            margin-top: 16px;
+            font-size: 12px;
+            color: #999;
+        }
+        @media (max-width: 480px) {
+            .container {
+                padding: 28px 20px;
+                border-radius: 12px;
+            }
+            h1 {
+                font-size: 18px;
+            }
+            p {
+                font-size: 13px;
+            }
+            .spinner {
+                width: 40px;
+                height: 40px;
+            }
+        }
+    </style>
+</head>
 <body>
-<form id="f" method="POST" action="${escHtml(action)}">
-    ${inputs}
-</form>
-<script>document.getElementById('f').submit();</script>
+    <div class="container">
+        <div class="spinner"></div>
+        <h1>Welcome <span class="name">${escHtml(userName)}</span></h1>
+        <p>Login successful! Redirecting you back to the application...</p>
+        <p class="redirect-hint">Please wait a moment...</p>
+    </div>
+    <form id="f" method="POST" action="${escHtml(action)}">
+        ${inputs}
+    </form>
+    <script>document.getElementById('f').submit();</script>
 </body>
 </html>`;
 }
@@ -105,8 +193,41 @@ module.exports = class {
 
   async getUserInfo() {
     const code = this.ctx.params?.code || this.ctx.query?.code;
+    const error = this.ctx.params?.error || this.ctx.query?.error;
+    const errorDescription = this.ctx.params?.error_description || this.ctx.query?.error_description;
 
-    // Step 1: No code — initial entry, redirect browser to provider
+    if (error) {
+      const errorMessage = errorDescription ? `${error}: ${errorDescription}` : error;
+      console.error('[Base.getUserInfo] OAuth error received:', errorMessage);
+      
+      let redirect = this.ctx.query?.redirect || this.ctx.params?.redirect;
+      let state = this.ctx.query?.state || this.ctx.params?.state;
+      
+      if (redirect) {
+        try {
+          let finalRedirect = redirect;
+          if (redirect.startsWith('http')) {
+            finalRedirect = redirect;
+          } else if (redirect.startsWith('/')) {
+            finalRedirect = this.getCompleteUrl(redirect);
+          } else {
+            finalRedirect = this.getCompleteUrl('/' + redirect);
+          }
+          
+          const errUrl = new URL(finalRedirect);
+          errUrl.searchParams.set('error', errorMessage);
+          if (state) errUrl.searchParams.set('state', state);
+          return this.ctx.redirect(errUrl.toString());
+        } catch (err) {
+          console.error('[Base.getUserInfo] Failed to build error redirect URL:', err.message);
+        }
+      }
+      
+      this.ctx.status = 400;
+      this.ctx.body = { error: errorMessage };
+      return;
+    }
+
     if (!code) {
       console.log('[Base.getUserInfo] No code found, redirecting to authorize()...');
       return this.redirect();

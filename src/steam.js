@@ -1,7 +1,7 @@
 const Base = require('./base');
 const qs = require('querystring');
 const request = require('request-promise-native');
-const { buildPostForm } = Base;
+const { buildPostForm } = require('./delivery/post-form');
 
 const OPENID_CHECK_URL = 'https://steamcommunity.com/openid/login';
 const PLAYER_SUMMARY_URL = 'https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/';

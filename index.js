@@ -4,6 +4,11 @@ const pkg = require('./package.json');
 const services = require('./src');
 const app = new Koa();
 
+app.use(async (ctx, next) => {
+  ctx.set('Cache-Control', 'no-store');
+  await next();
+});
+
 app.use((ctx, next) => {
   if (ctx.path !== '/') {
     return next();

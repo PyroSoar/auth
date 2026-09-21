@@ -1,6 +1,6 @@
 const Base = require('./base');
 const qs = require('querystring');
-const { fetchAvatarAsBase64 } = Base;
+const { fetchAvatarAsBase64 } = require('./media/avatar');
 
 const WEIBO_AUTHORIZE_URL  = 'https://api.weibo.com/oauth2/authorize';
 const WEIBO_ACCESS_TOKEN_URL = 'https://api.weibo.com/oauth2/access_token';

@@ -1,5 +1,5 @@
 const Base = require('./base');
-const { buildPostForm } = Base;
+const { buildPostForm } = require('./delivery/post-form');
 const crypto = require('crypto');
 const qs = require('querystring');
 const request = require('request-promise-native');

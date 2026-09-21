@@ -5,7 +5,8 @@
   "version": "1.2.0",
   "author": "lizheming <i@imnerd.org>",
   "scripts": {
-    "start": "vercel dev"
+    "start": "vercel dev",
+    "test": "node --test"
   },
   "dependencies": {
     "koa": "3.1.2",

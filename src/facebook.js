@@ -1,7 +1,7 @@
 const Base = require('./base');
 const qs = require('querystring');
 const request = require('request-promise-native');
-const { buildPostForm } = Base;
+const { buildPostForm } = require('./delivery/post-form');
 
 const OAUTH_URL       = 'https://www.facebook.com/v4.0/dialog/oauth';
 const ACCESS_TOKEN_URL = 'https://graph.facebook.com/v4.0/oauth/access_token';

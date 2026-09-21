@@ -1,450 +1,139 @@
 /**
- * Unified OAuth Authentication Service — Integration Examples
+ * Signed OAuth consumer example (CommonJS, Node 22+).
+ * These handlers belong in YOUR APPLICATION, not in the OAuth issuer.
+ * Mount them as POST /oauth/start, POST /oauth/callback, POST /oauth/complete.
+ * Serve /oauth/done separately; see TECHNICAL_GUIDE.md for browser/framework use.
  *
- * Live service: https://oauth.lzc2002.top/
+ * Required application adapters (no insecure in-memory production defaults):
+ * ticketStore.issue({ ticket, browserHash, provider, expiresAt })
+ * ticketStore.attachIdentity({ ticket, provider, identity, expiresAt, now }) -> boolean
+ *   Atomically fill ONLY an unexpired, matching, not-yet-verified flow. Cap the
+ *   existing expiry at assertion expiry. Never insert an unknown ticket here.
+ * ticketStore.redeem({ ticket, browserHash, now }) -> identity | null
+ *   Atomically delete and return ONLY a verified, unexpired, browser-owned flow.
+ * createSessionToken(identity) -> fresh opaque session token
+ *   Resolve an existing account by (platform, id). Do not auto-link by email.
+ *   Persist/rotate the application session; this is not the provider assertion.
  *
- * DELIVERY MODEL: User data is delivered via HTTP POST (not URL query params).
- * The auth service serves a self-submitting HTML form that POSTs to your
- * callback URL. Your callback receives an application/x-www-form-urlencoded
- * body — parse it like any standard HTML form submission.
+ * Use a shared database for these adapters in serverless/multi-instance apps.
+ * The ticket travels in OAuth's standard `state` parameter and the assertion's
+ * `nonce` claim. This example implements login only. Account binding must also
+ * save and check the initiating local account and operation in the ticket row.
  *
- * Flow:
- *   1. Send browser to  GET /github?redirect=<yourCallback>&state=<csrf>
- *   2. Auth service handles provider login + token exchange
- *   3. Browser POSTs to <yourCallback> with body:
- *        id=X&name=Y&email=Z&url=U&avatar=A&platform=github&state=<csrf>
- *
- * Supported providers:
- *   github, google, qq, facebook, weibo, twitter, huawei, steam, oidc
+ * Provider adapters also produce `originalResponse`, containing the raw profile
+ * response. Legacy callbacks and direct JSON results may include it. Signed
+ * assertions intentionally contain only normalized, bounded identity claims.
+ * Example legacy/direct result:
+ * {
+ *   id: 'octocat', name: 'The Octocat', email: 'octocat@github.com',
+ *   url: 'https://github.com/octocat', avatar: 'https://avatars.githubusercontent.com/...',
+ *   platform: 'github', originalResponse: { login: 'octocat', id: 1, ... }
+ * }
  */
+const { createHash, createPublicKey, randomBytes, randomUUID, verify } = require('node:crypto');
 
 const AUTH_SERVICE = 'https://oauth.lzc2002.top';
-
-// ==============================================================================
-// Example 1: Express.js — Full Integration
-// ==============================================================================
-
-const express = require('express');
-const session = require('express-session');
-const crypto  = require('crypto');
-
-const app = express();
-
-// Required: parse the POST body the auth service sends to your callback
-app.use(express.urlencoded({ extended: false }));
-
-app.use(session({
-  secret: process.env.SESSION_SECRET || 'change-me',
-  resave: false,
-  saveUninitialized: false,
-  cookie: { maxAge: 30 * 24 * 60 * 60 * 1000, httpOnly: true, sameSite: 'lax' }
-}));
-
-const VALID_PROVIDERS = [
-  'github', 'google', 'qq', 'facebook', 'weibo',
-  'twitter', 'huawei', 'steam', 'oidc'
-];
-
-/**
- * Step 1 — Initiate login.
- * GET /auth/login/github
- *
- * Redirects browser to the auth service, which redirects to the provider.
- * After login the auth service POSTs user data to /auth/callback/:provider.
- */
-app.get('/auth/login/:provider', (req, res) => {
-  const { provider } = req.params;
-  if (!VALID_PROVIDERS.includes(provider)) {
-    return res.status(400).json({ error: `Unknown provider "${provider}"` });
-  }
-
-  const state = crypto.randomBytes(16).toString('hex');
-  req.session.oauthState = state;
-
-  // The auth service will POST user data to this URL
-  const callbackUrl = `${process.env.SERVER_URL}/auth/callback/${provider}`;
-
-  const authUrl = new URL(`${AUTH_SERVICE}/${provider}`);
-  authUrl.searchParams.set('redirect', callbackUrl);
-  authUrl.searchParams.set('state', state);
-
-  res.redirect(authUrl.toString());
+const PROVIDERS = ['github', 'google', 'qq', 'facebook', 'weibo', 'twitter', 'huawei', 'steam', 'oidc', 'microsoft-consumers'];
+const BROWSER = '__Host-example_oauth_browser';
+const TICKET = '__Host-example_oauth_ticket';
+const cookie = (name, value, seconds) => name + '=' + value + '; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=' + seconds;
+const digest = value => createHash('sha256').update(value, 'utf8').digest('hex');
+const getCookie = (request, name) => (request.headers.get('Cookie') || '').split(';')
+  .map(value => value.trim()).find(value => value.startsWith(name + '='))?.slice(name.length + 1) || '';
+const json = (body, status = 200) => new Response(JSON.stringify(body), {
+  status, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
 });
 
-/**
- * Step 2 — Receive user data via POST.
- * POST /auth/callback/github
- *
- * Body (application/x-www-form-urlencoded):
- *   id, name, email, url, avatar, platform, state
- *   — or —
- *   error, state
- */
-app.post('/auth/callback/:provider', (req, res) => {
-  const { error, state, id, name, email, url, avatar, platform } = req.body;
-
-  // Forward errors from the auth service
-  if (error) {
-    return res.redirect(`/login?error=${encodeURIComponent(error)}`);
+function verifyAssertion(assertion, publicKey, audience) {
+  if (typeof assertion !== 'string' || assertion.length > 12000) throw new Error('Invalid assertion');
+  const parts = assertion.split('.');
+  if (parts.length !== 3 || parts.some(part => !/^[A-Za-z0-9_-]+$/.test(part))) throw new Error('Invalid assertion');
+  const parse = part => JSON.parse(Buffer.from(part, 'base64url').toString('utf8'));
+  const header = parse(parts[0]);
+  if (header.alg !== 'RS256' || header.typ !== 'JWT' || header.crit) throw new Error('Invalid algorithm');
+  if (!verify('RSA-SHA256', Buffer.from(parts[0] + '.' + parts[1], 'utf8'), publicKey, Buffer.from(parts[2], 'base64url'))) {
+    throw new Error('Invalid signature');
   }
-
-  // CSRF check
-  if (!state || state !== req.session.oauthState) {
-    return res.status(403).send('CSRF state mismatch');
+  const claims = parse(parts[1]);
+  const now = Math.floor(Date.now() / 1000);
+  if (claims.iss !== AUTH_SERVICE || claims.aud !== audience ||
+      !Number.isInteger(claims.iat) || !Number.isInteger(claims.exp) ||
+      claims.iat > now + 30 || claims.exp <= now || claims.exp <= claims.iat || claims.exp - claims.iat > 120 ||
+      typeof claims.nonce !== 'string' || !/^[a-f0-9-]{36}$/.test(claims.nonce) ||
+      typeof claims.sub !== 'string' || !claims.sub || claims.sub.length > 512 ||
+      typeof claims.jti !== 'string' || !claims.jti || !PROVIDERS.includes(claims.platform)) {
+    throw new Error('Invalid claims');
   }
-  delete req.session.oauthState;
-
-  // User data is ready — store in session or database
-  req.session.user = { id, name, email, url, avatar, platform };
-  res.redirect('/dashboard');
-});
-
-app.get('/auth/me', (req, res) => {
-  if (!req.session.user) return res.status(401).json({ error: 'Not authenticated' });
-  res.json(req.session.user);
-});
-
-app.post('/auth/logout', (req, res) => {
-  req.session.destroy(() => res.json({ ok: true }));
-});
-
-// app.listen(3000);
-
-
-// ==============================================================================
-// Example 2: Next.js App Router — API Routes
-// ==============================================================================
-
-// app/api/auth/login/[provider]/route.js
-export async function GET_NextLogin(req, { params }) {
-  const { provider } = params;
-  const state = crypto.randomUUID();
-
-  // Callback that will receive the POST body
-  const callbackUrl = `${process.env.NEXT_PUBLIC_URL}/api/auth/callback/${provider}`;
-
-  const authUrl = new URL(`${AUTH_SERVICE}/${provider}`);
-  authUrl.searchParams.set('redirect', callbackUrl);
-  authUrl.searchParams.set('state', state);
-
-  const response = Response.redirect(authUrl.toString(), 302);
-  response.headers.set('Set-Cookie',
-    `oauth_state=${state}; Path=/; HttpOnly; SameSite=Lax; Max-Age=600`);
-  return response;
+  for (const [field, limit] of [['name', 200], ['email', 320], ['avatar', 1024]]) {
+    if (claims[field] != null && (typeof claims[field] !== 'string' || claims[field].length > limit)) throw new Error('Invalid profile');
+  }
+  if (claims.avatar && !claims.avatar.startsWith('https://')) throw new Error('Invalid avatar');
+  return claims;
 }
 
-// app/api/auth/callback/[provider]/route.js
-export async function POST_NextCallback(req, { params }) {
-  // Parse the urlencoded POST body from the auth service
-  const formData  = await req.formData();
-  const error     = formData.get('error');
-  const state     = formData.get('state');
-  const id        = formData.get('id');
-  const name      = formData.get('name');
-  const email     = formData.get('email');
-  const avatar    = formData.get('avatar');
-  const platform  = formData.get('platform');
-
-  if (error) {
-    return Response.redirect(
-      `${process.env.NEXT_PUBLIC_URL}/login?error=${encodeURIComponent(error)}`
-    );
+function createLoginExample({ origin, publicKeyPem, ticketStore, createSessionToken }) {
+  if (!origin || new URL(origin).protocol !== 'https:' || new URL(origin).origin !== origin) throw new Error('Configure an exact HTTPS application origin');
+  if (!publicKeyPem || !ticketStore || typeof createSessionToken !== 'function') throw new Error('Missing application configuration');
+  for (const method of ['issue', 'attachIdentity', 'redeem']) {
+    if (typeof ticketStore[method] !== 'function') throw new Error('Missing ticket store adapter: ' + method);
   }
+  const publicKey = createPublicKey(publicKeyPem.replace(/\\n/g, '\n'));
+  if (publicKey.asymmetricKeyType !== 'rsa' || publicKey.asymmetricKeyDetails.modulusLength < 2048) throw new Error('Invalid RSA public key');
+  const callbackUrl = origin + '/oauth/callback';
+  const sameOriginPost = request => request.method === 'POST' && request.headers.get('Origin') === origin;
 
-  const cookieState = req.cookies.get('oauth_state')?.value;
-  if (!cookieState || cookieState !== state) {
-    return Response.json({ error: 'State mismatch' }, { status: 403 });
-  }
-
-  // Create session with user data
-  const userData = { id, name, email, avatar, platform };
-  // const sessionToken = await createSession(userData);
-
-  const response = Response.redirect(
-    `${process.env.NEXT_PUBLIC_URL}/dashboard`, 302
-  );
-  response.headers.append('Set-Cookie', `oauth_state=; Path=/; Max-Age=0`);
-  // response.headers.append('Set-Cookie', `session=${sessionToken}; Path=/; HttpOnly`);
-  return response;
-}
-
-
-// ==============================================================================
-// Example 3: Vanilla Browser JavaScript — Popup Flow
-// ==============================================================================
-
-/**
- * Opens a popup for OAuth login.
- *
- * The auth service POSTs to the callback page (oauth-callback.html), which reads
- * the POST body via a form and forwards the data to the opener via postMessage.
- *
- * Note: The callback page must use a form with JS to read POST body fields,
- * since browsers don't expose POST bodies directly to window.location parsing.
- */
-class OAuthPopup {
-  constructor(authServiceUrl = AUTH_SERVICE) {
-    this.authServiceUrl = authServiceUrl;
-  }
-
-  /**
-   * @param {'github'|'google'|'qq'|'facebook'|'weibo'|'twitter'|'huawei'|'steam'|'oidc'} provider
-   * @returns {Promise<{id, name, email, url, avatar, platform}>}
-   */
-  login(provider) {
-    return new Promise((resolve, reject) => {
-      const state       = crypto.randomUUID();
-      const callbackUrl = `${location.origin}/oauth-callback.html`;
-
-      sessionStorage.setItem('oauth_state', state);
-
-      const authUrl = new URL(`${this.authServiceUrl}/${provider}`);
-      authUrl.searchParams.set('redirect', callbackUrl);
-      authUrl.searchParams.set('state', state);
-
-      const popup = window.open(authUrl.toString(), 'oauth_popup',
-        'width=520,height=640,menubar=no,toolbar=no');
-      if (!popup) { reject(new Error('Popup blocked')); return; }
-
-      const onMessage = (event) => {
-        if (event.origin !== location.origin) return;
-        if (!event.data || event.data.type !== 'oauth_callback') return;
-        window.removeEventListener('message', onMessage);
-        clearInterval(pollClose);
-
-        const savedState = sessionStorage.getItem('oauth_state');
-        sessionStorage.removeItem('oauth_state');
-
-        if (event.data.state !== savedState) {
-          reject(new Error('CSRF state mismatch'));
-          return;
-        }
-        if (event.data.error) {
-          reject(new Error(event.data.error));
-          return;
-        }
-
-        resolve({
-          id:       event.data.id,
-          name:     event.data.name,
-          email:    event.data.email,
-          url:      event.data.url,
-          avatar:   event.data.avatar,
-          platform: event.data.platform,
-        });
-      };
-
-      window.addEventListener('message', onMessage);
-
-      const pollClose = setInterval(() => {
-        if (popup.closed) {
-          clearInterval(pollClose);
-          window.removeEventListener('message', onMessage);
-          sessionStorage.removeItem('oauth_state');
-          reject(new Error('Login popup closed'));
-        }
-      }, 500);
-    });
-  }
-}
-
-/**
- * oauth-callback.html
- * ─────────────────────────────────────────────────────────────────────────────
- * This page receives the POST from the auth service. Since it's a POST, we
- * can't read the body from JS directly — instead we embed the values as hidden
- * inputs (the auth service already put them there) and read them via the DOM,
- * then forward to the opener.
- *
- * The auth service's POST form already targets this URL, so the browser
- * renders this page with the form fields in the document. We read those values
- * using a second <form> trick, or more simply by having the page be a form
- * target itself that exposes field values via document.forms or named inputs.
- *
- * Simplest approach: make this page a form action endpoint on your own backend
- * that sets a short-lived cookie and redirects to a tiny JS page.
- *
- * Alternative: use a server-rendered callback page (see Example 1 / Example 2)
- * — this is the recommended approach for most apps. The popup flow works best
- * for pure client-side SPAs with a small backend shim.
- *
- * If you control the callback server, the recommended popup flow is:
- *   1. Backend receives POST, stores user data in a short-lived signed token
- *   2. Redirects popup to /oauth-done?token=<signedToken>
- *   3. /oauth-done.html reads token from URL, postMessages it to opener
- *
- * <!DOCTYPE html><html><body><script>
- *   const p = new URLSearchParams(location.search);
- *   // token was set by your backend redirect
- *   window.opener?.postMessage({
- *     type:     'oauth_callback',
- *     state:    p.get('state'),
- *     error:    p.get('error'),
- *     id:       p.get('id'),
- *     name:     p.get('name'),
- *     email:    p.get('email'),
- *     url:      p.get('url'),
- *     avatar:   p.get('avatar'),
- *     platform: p.get('platform'),
- *   }, location.origin);
- *   window.close();
- * </script></body></html>
- */
-
-// Usage:
-// const oauth = new OAuthPopup();
-// const user  = await oauth.login('github');
-// console.log(user.name, user.platform);
-
-
-// ==============================================================================
-// Example 4: React Hook — useOAuth (with backend callback route)
-// ==============================================================================
-
-// import { useState, useCallback } from 'react';
-
-/**
- * useOAuth — opens a popup, waits for backend to process the POST callback
- * and signal completion via postMessage.
- *
- * Your backend POST callback route should:
- *   1. Receive the urlencoded POST body from the auth service
- *   2. Verify state, create session
- *   3. Redirect the popup to /oauth-done?id=X&name=Y&... (or a signed token)
- *
- * /oauth-done.html posts back to opener and closes.
- */
-function useOAuth(authServiceUrl = AUTH_SERVICE) {
-  const [user,    setUser]    = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error,   setError]   = useState(null);
-
-  const login = useCallback((provider) => {
-    setLoading(true);
-    setError(null);
-
-    const state       = crypto.randomUUID();
-    // This backend route accepts POST, processes it, then redirects popup to /oauth-done
-    const callbackUrl = `${location.origin}/api/auth/callback/${provider}`;
-
-    sessionStorage.setItem('oauth_state', state);
-
-    const authUrl = new URL(`${authServiceUrl}/${provider}`);
-    authUrl.searchParams.set('redirect', callbackUrl);
-    authUrl.searchParams.set('state', state);
-
-    const popup = window.open(authUrl.toString(), 'oauth', 'width=520,height=640');
-
-    const onMessage = (event) => {
-      if (event.origin !== location.origin) return;
-      if (event.data?.type !== 'oauth_callback') return;
-      window.removeEventListener('message', onMessage);
-
-      const savedState = sessionStorage.getItem('oauth_state');
-      sessionStorage.removeItem('oauth_state');
-
-      if (event.data.state !== savedState) {
-        setError('CSRF state mismatch');
-        setLoading(false);
-        return;
-      }
-      if (event.data.error) {
-        setError(event.data.error);
-        setLoading(false);
-        return;
-      }
-
-      setUser({
-        id: event.data.id, name: event.data.name,
-        email: event.data.email, avatar: event.data.avatar,
-        platform: event.data.platform,
-      });
-      setLoading(false);
-    };
-
-    window.addEventListener('message', onMessage);
-  }, [authServiceUrl]);
-
-  const logout = useCallback(() => setUser(null), []);
-  return { user, loading, error, login, logout };
-}
-
-
-// ==============================================================================
-// Example 5: Utility — parseOAuthPost
-// ==============================================================================
-
-/**
- * Parse the POST body received from the auth service in a generic handler.
- * Works with any framework that exposes body fields as an object.
- *
- * @param {object} body       - Parsed request body (e.g. req.body in Express)
- * @param {string} savedState - The CSRF state you stored before initiating login
- * @returns {{ user: object } | { error: string }}
- */
-function parseOAuthPost(body, savedState) {
-  if (body.error) {
-    return { error: body.error };
-  }
-  if (!body.state || body.state !== savedState) {
-    return { error: 'CSRF state mismatch' };
-  }
   return {
-    user: {
-      id:       body.id       || null,
-      name:     body.name     || null,
-      email:    body.email    || undefined,
-      url:      body.url      || undefined,
-      avatar:   body.avatar   || undefined,
-      platform: body.platform || null,
-    }
+    async start(request) {
+      if (!sameOriginPost(request)) return json({ error: 'invalid_origin_or_method' }, 403);
+      const body = await request.json().catch(() => null);
+      if (!body || !PROVIDERS.includes(body.provider)) return json({ error: 'invalid_provider' }, 400);
+      let browser = getCookie(request, BROWSER);
+      if (!/^[a-f0-9]{64}$/.test(browser)) browser = randomBytes(32).toString('hex');
+      const ticket = randomUUID();
+      await ticketStore.issue({ ticket, browserHash: digest(browser), provider: body.provider, expiresAt: Date.now() + 600000 });
+      const url = new URL('/' + body.provider, AUTH_SERVICE);
+      url.searchParams.set('redirect', callbackUrl);
+      // OAuth calls this parameter `state`; for the consumer it is a one-time ticket.
+      url.searchParams.set('state', ticket);
+      const response = json({ authUrl: url.href });
+      response.headers.set('Set-Cookie', cookie(BROWSER, browser, 3600));
+      return response;
+    },
+
+    async callback(request) {
+      if (request.method !== 'POST') return json({ error: 'post_required' }, 405);
+      const text = await request.text();
+      if (text.length > 16000) return json({ error: 'body_too_large' }, 413);
+      let claims;
+      try { claims = verifyAssertion(new URLSearchParams(text).get('assertion'), publicKey, callbackUrl); }
+      catch { return json({ error: 'invalid_assertion' }, 401); }
+      const attached = await ticketStore.attachIdentity({
+        ticket: claims.nonce, provider: claims.platform, expiresAt: claims.exp * 1000, now: Date.now(),
+        identity: { platform: claims.platform, id: claims.sub, name: claims.name ?? null, email: claims.email ?? null, avatar: claims.avatar ?? null },
+      });
+      if (!attached) return json({ error: 'invalid_ticket' }, 400);
+      // Cross-site form POST may omit Lax cookies. No session is issued here.
+      return new Response(null, { status: 303, headers: {
+        Location: origin + '/oauth/done', 'Cache-Control': 'no-store',
+        'Set-Cookie': cookie(TICKET, claims.nonce, 120),
+      } });
+    },
+
+    async complete(request) {
+      if (!sameOriginPost(request)) return json({ error: 'invalid_origin_or_method' }, 403);
+      const browser = getCookie(request, BROWSER);
+      const ticket = getCookie(request, TICKET);
+      if (!/^[a-f0-9]{64}$/.test(browser) || !ticket) return json({ error: 'missing_browser_context' }, 400);
+      const identity = await ticketStore.redeem({ ticket, browserHash: digest(browser), now: Date.now() });
+      if (!identity) return json({ error: 'expired_or_used_authorization' }, 400);
+      const token = await createSessionToken(identity);
+      if (typeof token !== 'string' || !/^[A-Za-z0-9_-]{32,256}$/.test(token)) throw new Error('Session adapter must return a fresh opaque token');
+      const response = json({ authenticated: true });
+      response.headers.append('Set-Cookie', cookie('__Host-example_session', token, 3600));
+      response.headers.append('Set-Cookie', cookie(TICKET, '', 0));
+      return response;
+    },
   };
 }
 
-// Usage:
-// app.post('/auth/callback/:provider', (req, res) => {
-//   const result = parseOAuthPost(req.body, req.session.oauthState);
-//   if (result.error) return res.redirect('/login?error=' + result.error);
-//   req.session.user = result.user;
-//   res.redirect('/dashboard');
-// });
-
-
-// ==============================================================================
-// Example 6: Check available providers
-// ==============================================================================
-
-async function getAvailableProviders() {
-  const res  = await fetch(AUTH_SERVICE);
-  const data = await res.json();
-  return data.services.map(s => s.name);
-  // e.g. ['github', 'weibo', 'twitter', 'google', 'qq', 'huawei', 'steam']
-}
-
-
-// ==============================================================================
-// Example 7: Server-to-server (no browser, no redirect)
-// ==============================================================================
-
-/**
- * For server-side integrations where you already have a code and state
- * (e.g. a mobile app that handled the provider redirect natively),
- * call the auth service directly without a redirect param.
- * The service returns JSON — no HTML form is involved.
- */
-async function exchangeCodeForUser({ provider, code, state }) {
-  const url = new URL(`${AUTH_SERVICE}/${provider}`);
-  url.searchParams.set('code', code);
-  if (state) url.searchParams.set('state', state);
-
-  const res  = await fetch(url.toString());
-  const data = await res.json();
-
-  if (!res.ok || data.errno) {
-    throw Object.assign(
-      new Error(data.message || 'Auth exchange failed'),
-      { status: res.status }
-    );
-  }
-  return data; // { id, name, email, url, avatar, platform }
-}
+module.exports = { createLoginExample, verifyAssertion };

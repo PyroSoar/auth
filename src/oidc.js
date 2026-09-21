@@ -1,7 +1,7 @@
 const Base = require('./base');
 const qs = require('querystring');
 const request = require('request-promise-native');
-const { buildPostForm } = Base;
+const { buildPostForm } = require('./delivery/post-form');
 
 const {
   OIDC_ID, OIDC_SECRET, OIDC_ISSUER, OIDC_SCOPES,

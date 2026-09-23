@@ -49,6 +49,12 @@ test('shared form helper emits the assertion without bare identity fields', asyn
     assert.match(html, /@media \(prefers-color-scheme: dark\)/);
     assert.match(html, /@media \(prefers-reduced-motion: reduce\)/);
     assert.match(html, /<noscript>[\s\S]*type="submit">Continue<\/button>/);
+    assert.match(html, /data-username="测试用户"/);
+    for (const language of ['ar', 'zh', 'fr', 'ru', 'es']) {
+      assert.match(html, new RegExp(`${language}: \\{`));
+    }
+    assert.match(html, /navigator\.languages/);
+    assert.match(html, /document\.documentElement\.dir = language === 'ar' \? 'rtl' : 'ltr'/);
   } finally {
     for (const [name, value] of [['OAUTH_ASSERTION_CALLBACKS', previous.callbacks], ['OAUTH_ASSERTION_PRIVATE_KEY', previous.key]]) {
       if (value === undefined) delete process.env[name]; else process.env[name] = value;

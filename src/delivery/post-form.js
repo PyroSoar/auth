@@ -16,6 +16,7 @@ function formInputs(fields) {
 
 function buildPostForm(action, identity) {
   const fields = callbackFields(action, identity);
+  const displayName = typeof identity.name === 'string' ? identity.name.trim().slice(0, 200) : '';
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -115,6 +116,22 @@ function buildPostForm(action, identity) {
       font-size: 15px;
       line-height: 1.65;
     }
+    .username {
+      display: inline-flex;
+      max-width: 100%;
+      margin: 16px auto -2px;
+      padding: 6px 11px;
+      overflow: hidden;
+      border: 1px solid var(--card-border);
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 600;
+      line-height: 1.35;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
     .progress {
       display: flex;
       width: max-content;
@@ -193,6 +210,7 @@ function buildPostForm(action, identity) {
       </svg>
     </div>
     <h1 id="status-title">Authorization complete</h1>
+    ${displayName ? `<p id="username" class="username" data-username="${escapeAttribute(displayName)}">Signed in as ${escapeAttribute(displayName)}</p>` : ''}
     <p id="status-message" class="message" role="status" aria-live="polite">
       Returning you securely to the application.
     </p>
@@ -205,7 +223,59 @@ function buildPostForm(action, identity) {
       </noscript>
     </form>
   </main>
-  <script>document.getElementById('oauth-result').submit()</script>
+  <script>
+    (() => {
+      const translations = {
+        en: {
+          title: 'Completing sign-in', heading: 'Authorization complete',
+          message: 'Returning you securely to the application.',
+          signedInAs: 'Signed in as {name}', fallback: 'Automatic redirection requires JavaScript.', continue: 'Continue',
+        },
+        ar: {
+          title: 'جارٍ إكمال تسجيل الدخول', heading: 'اكتمل التفويض',
+          message: 'تتم إعادتك بأمان إلى التطبيق.',
+          signedInAs: 'تم تسجيل الدخول باسم {name}', fallback: 'تتطلب إعادة التوجيه التلقائية JavaScript.', continue: 'متابعة',
+        },
+        zh: {
+          title: '正在完成登录', heading: '授权完成',
+          message: '正在安全地返回应用。',
+          signedInAs: '已登录为 {name}', fallback: '自动跳转需要 JavaScript。', continue: '继续',
+        },
+        fr: {
+          title: 'Finalisation de la connexion', heading: 'Autorisation terminée',
+          message: 'Retour sécurisé vers l’application en cours.',
+          signedInAs: 'Connecté en tant que {name}', fallback: 'La redirection automatique nécessite JavaScript.', continue: 'Continuer',
+        },
+        ru: {
+          title: 'Завершение входа', heading: 'Авторизация завершена',
+          message: 'Вы будете безопасно возвращены в приложение.',
+          signedInAs: 'Выполнен вход: {name}', fallback: 'Для автоматического перенаправления требуется JavaScript.', continue: 'Продолжить',
+        },
+        es: {
+          title: 'Completando el inicio de sesión', heading: 'Autorización completada',
+          message: 'Volviendo de forma segura a la aplicación.',
+          signedInAs: 'Has iniciado sesión como {name}', fallback: 'La redirección automática requiere JavaScript.', continue: 'Continuar',
+        },
+      };
+      const preferred = (navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language])
+        .map(language => String(language || '').toLowerCase().split('-')[0])
+        .find(language => Object.prototype.hasOwnProperty.call(translations, language));
+      const language = preferred || 'en';
+      const copy = translations[language];
+      document.documentElement.lang = language;
+      document.documentElement.dir = language === 'ar' ? 'rtl' : 'ltr';
+      document.title = copy.title;
+      document.getElementById('status-title').textContent = copy.heading;
+      document.getElementById('status-message').textContent = copy.message;
+      const username = document.getElementById('username');
+      if (username) username.textContent = copy.signedInAs.replace('{name}', username.dataset.username);
+      const fallback = document.querySelector('.fallback');
+      if (fallback) fallback.textContent = copy.fallback;
+      const button = document.querySelector('.continue-button');
+      if (button) button.textContent = copy.continue;
+      requestAnimationFrame(() => document.getElementById('oauth-result').submit());
+    })();
+  </script>
 </body>
 </html>`;
 }

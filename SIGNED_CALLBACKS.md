@@ -93,8 +93,9 @@ not be treated as cryptographic identity proof.
 The RS256 JWT includes `iss`, `aud` (exact callback URL), `sub`, `platform`, `nonce`
 (the consumer ticket transported as OAuth `state`), `iat`, `exp` (120 seconds),
 `jti`, and limited profile fields. Provider tokens and `originalResponse` are
-never included. Large/base64 avatars are omitted; only bounded HTTPS avatar URLs
-are included. Provider adapters do expose `originalResponse` in their normalized
+never included. Avatars are included as an `http(s)://` URL, with `http://` rewritten to
+`https://`, or as an inline `data:image/(png|jpeg|gif|webp);base64,` image; avatar length is
+not bounded. Any other avatar shape is omitted. Provider adapters do expose `originalResponse` in their normalized
 legacy/direct result, where it contains the provider-specific raw profile object.
 
 The consumer must verify signature, algorithm, issuer, audience, lifetime, and a

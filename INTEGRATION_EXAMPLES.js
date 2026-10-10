@@ -22,7 +22,8 @@
  *
  * Provider adapters also produce `originalResponse`, containing the raw profile
  * response. Legacy callbacks and direct JSON results may include it. Signed
- * assertions intentionally contain only normalized, bounded identity claims.
+ * assertions intentionally contain only normalized identity claims; the avatar
+ * is an https URL or an inline base64 image and has no length bound.
  * Example legacy/direct result:
  * {
  *   id: 'octocat', name: 'The Octocat', email: 'octocat@github.com',
@@ -44,8 +45,22 @@ const json = (body, status = 200) => new Response(JSON.stringify(body), {
   status, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
 });
 
+// Inline base64 avatars have no length bound, so the assertion ceiling is only
+// a guard against abuse; raise it if a provider ever returns a larger image.
+const MAX_ASSERTION_CHARS = 1024 * 1024;
+// The avatar is display-only: keep an https URL or an inline base64 image and
+// drop anything else, so a provider's avatar choice never fails a login.
+function avatarClaim(value) {
+  if (typeof value !== 'string' || !value) return null;
+  const upgraded = value.replace(/^http:\/\//, 'https://');
+  if (upgraded.startsWith('https://')) return upgraded;
+  const inline = upgraded.replace(/\s+/g, '');
+  const payload = /^data:image\/(?:png|jpeg|gif|webp);base64,([A-Za-z0-9+\/]+={0,2})$/.exec(inline)?.[1];
+  return payload && payload.length % 4 === 0 ? inline : null;
+}
+
 function verifyAssertion(assertion, publicKey, audience) {
-  if (typeof assertion !== 'string' || assertion.length > 12000) throw new Error('Invalid assertion');
+  if (typeof assertion !== 'string' || assertion.length > MAX_ASSERTION_CHARS) throw new Error('Invalid assertion');
   const parts = assertion.split('.');
   if (parts.length !== 3 || parts.some(part => !/^[A-Za-z0-9_-]+$/.test(part))) throw new Error('Invalid assertion');
   const parse = part => JSON.parse(Buffer.from(part, 'base64url').toString('utf8'));
@@ -64,10 +79,10 @@ function verifyAssertion(assertion, publicKey, audience) {
       typeof claims.jti !== 'string' || !claims.jti || !PROVIDERS.includes(claims.platform)) {
     throw new Error('Invalid claims');
   }
-  for (const [field, limit] of [['name', 200], ['email', 320], ['avatar', 1024]]) {
+  for (const [field, limit] of [['name', 200], ['email', 320]]) {
     if (claims[field] != null && (typeof claims[field] !== 'string' || claims[field].length > limit)) throw new Error('Invalid profile');
   }
-  if (claims.avatar && !claims.avatar.startsWith('https://')) throw new Error('Invalid avatar');
+  claims.avatar = avatarClaim(claims.avatar);
   return claims;
 }
 
@@ -103,7 +118,7 @@ function createLoginExample({ origin, publicKeyPem, ticketStore, createSessionTo
     async callback(request) {
       if (request.method !== 'POST') return json({ error: 'post_required' }, 405);
       const text = await request.text();
-      if (text.length > 16000) return json({ error: 'body_too_large' }, 413);
+      if (text.length > MAX_ASSERTION_CHARS) return json({ error: 'body_too_large' }, 413);
       let claims;
       try { claims = verifyAssertion(new URLSearchParams(text).get('assertion'), publicKey, callbackUrl); }
       catch { return json({ error: 'invalid_assertion' }, 401); }

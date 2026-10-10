@@ -7,6 +7,10 @@ const ACCESS_TOKEN_URL = 'https://graph.qq.com/oauth2.0/token';
 const TOKEN_INFO_URL = 'https://graph.qq.com/oauth2.0/me';
 const USER_INFO_URL  = 'https://graph.qq.com/user/get_user_info';
 
+// QQ serves avatars over plain HTTP; rewrite only that leading scheme so the
+// normalized profile carries an HTTPS URL regardless of who consumes it.
+const toHttps = url => typeof url === 'string' ? url.replace(/^http:\/\//, 'https://') : url;
+
 const { QQ_ID, QQ_SECRET } = process.env;
 
 module.exports = class extends Base {
@@ -89,8 +93,8 @@ module.exports = class extends Base {
       name: userInfo.nickname || 'QQ User',
       email: userInfo.email || `${tokenInfo.openid}@qq-uuid.com`,
       url: undefined,
-      avatar: userInfo.figureurl_qq_2 || userInfo.figureurl_qq_1 || userInfo.figureurl_qq
-           || userInfo.figureurl_2    || userInfo.figureurl_1    || userInfo.figureurl || undefined,
+      avatar: toHttps(userInfo.figureurl_qq_2 || userInfo.figureurl_qq_1 || userInfo.figureurl_qq
+           || userInfo.figureurl_2    || userInfo.figureurl_1    || userInfo.figureurl || undefined),
       originalResponse: { tokenInfo, userInfo }
     }, 'qq');
   }

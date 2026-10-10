@@ -214,9 +214,9 @@ The JWT is signed, not encrypted. Treat it as short-lived authentication materia
 | `nonce` | Consumer ticket transported through the OAuth `state` parameter |
 | `iat`, `exp` | Unix seconds; lifetime is 120 seconds |
 | `jti` | Unique assertion identifier |
-| `name`, `email`, `avatar` | Optional bounded display fields; only HTTPS avatar URLs are included |
+| `name`, `email`, `avatar` | Optional display fields; `name`/`email` are bounded to 200/320 characters, `avatar` is an HTTPS URL or an inline base64 image with no length bound |
 
-Do not auto-link local accounts by `email`: some adapters synthesize placeholder addresses and this protocol does not assert email ownership. Provider access tokens, `originalResponse`, profile `url`, and base64 avatars are excluded from signed delivery.
+Do not auto-link local accounts by `email`: some adapters synthesize placeholder addresses and this protocol does not assert email ownership. Provider access tokens, `originalResponse`, and profile `url` are excluded from signed delivery; avatars are delivered as HTTPS URLs (`http://` is rewritten) or inline base64 images.
 
 ## Normalized provider result
 

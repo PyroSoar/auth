@@ -26,3 +26,4 @@ node_modules/
 .vercel
 .env
 .secrets/
+.workbuddy

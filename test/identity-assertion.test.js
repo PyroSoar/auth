@@ -26,6 +26,34 @@ test('configured callbacks receive only an RSA-signed, short-lived assertion', (
   assert.notEqual(claims.jti, JSON.parse(Buffer.from(callbackFields(callback, identity, env).assertion.split('.')[1], 'base64url').toString('utf8')).jti);
 });
 
+test('signed assertions carry HTTPS, upgraded HTTP and inline image avatars', () => {
+  const claimsOf = avatar => JSON.parse(Buffer.from(
+    callbackFields(callback, { ...identity, avatar }, env).assertion.split('.')[1], 'base64url'
+  ).toString('utf8'));
+
+  assert.equal(claimsOf('https://cdn.example.com/a.png').avatar, 'https://cdn.example.com/a.png');
+  assert.equal(claimsOf('http://thirdqq.qlogo.cn/ek_qqapp/ABC/100').avatar,
+    'https://thirdqq.qlogo.cn/ek_qqapp/ABC/100');
+  const jpeg = 'data:image/jpeg;base64,' + 'A'.repeat(4000);
+  assert.equal(claimsOf(jpeg).avatar, jpeg);
+  // Avatar length is unbounded: providers pick the resolution they return.
+  const longUrl = 'https://' + 'a'.repeat(2000);
+  assert.equal(claimsOf(longUrl).avatar, longUrl);
+  const large = 'data:image/png;base64,' + 'A'.repeat(262148);
+  assert.equal(claimsOf(large).avatar, large);
+});
+
+test('avatars outside the documented shapes are omitted from the assertion', () => {
+  const claimsOf = avatar => JSON.parse(Buffer.from(
+    callbackFields(callback, { ...identity, avatar }, env).assertion.split('.')[1], 'base64url'
+  ).toString('utf8'));
+
+  for (const avatar of [undefined, null, '', 'ftp://cdn.example.com/a.png',
+    'data:text/html;base64,PHNjcmlwdD4=', 'data:image/png;base64,QQQ']) {
+    assert.equal(claimsOf(avatar).avatar, null);
+  }
+});
+
 test('configured callbacks fail closed without a signing key or identity', () => {
   assert.throws(() => callbackFields(callback, identity, { ...env, OAUTH_ASSERTION_PRIVATE_KEY: '' }));
   assert.throws(() => callbackFields(callback, { ...identity, id: '' }, env));

@@ -44,7 +44,7 @@ The fixed JWT header is `{ "alg": "RS256", "typ": "JWT" }`.
 | `nonce` | Matching server-generated ticket carried in OAuth `state` |
 | `iat`, `exp` | Integer Unix seconds; unexpired, lifetime at most 120 seconds, limited future clock skew |
 | `jti` | Nonempty unique assertion ID |
-| `name`, `email`, `avatar` | Optional strings bounded to 200, 320 and 1024 characters; avatar must use HTTPS |
+| `name`, `email`, `avatar` | Optional strings bounded to 200, 320 characters for `name`/`email`; `avatar` is an `https://` URL (`http://` rewritten to `https://`) or an inline `data:image/(png|jpeg|gif|webp);base64,` image, with no length bound |
 
 Verify with a pinned RSA public key of at least 2048 bits. Do not accept the algorithm or verification key from the request. Reject malformed signatures and unexpected algorithms. Do not merely decode the JWT. Render profile fields as text and never auto-link accounts by email.
 
@@ -180,7 +180,7 @@ Unlisted callback destinations still receive ordinary form fields such as `id`, 
 - Twitter/X uses OAuth 2.0 PKCE and may synthesize an email.
 - Huawei stores redirect context in a process-local Map; multi-instance deployments need shared state.
 - Steam uses OpenID 2.0, verifies the assertion server-side, and synthesizes an email.
-- Weibo legacy delivery may include a large base64 avatar. Signed delivery omits base64 avatars.
+- Weibo and Microsoft return inline base64 avatars and QQ returns an `http://` URL; signed delivery passes them through, upgrading `http://` to `https://`.
 - Generic OIDC can use discovery or explicit endpoints and has provider-specific redirect requirements.
 - Only `microsoft-consumers` is currently exported. Tenant/common source files exist but must be enabled and validated separately.
 

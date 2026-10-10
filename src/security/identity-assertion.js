@@ -1,5 +1,23 @@
 const { createPrivateKey, randomUUID, sign } = require('node:crypto');
 
+const DATA_IMAGE_URL = /^data:image\/(?:png|jpeg|gif|webp);base64,([A-Za-z0-9+\/]+={0,2})$/;
+
+// Providers return three avatar shapes: an HTTPS URL (GitHub, Google), an HTTP
+// URL (QQ), and an inline base64 image (Microsoft, Weibo). HTTP URLs are
+// rewritten to HTTPS so consumers never have to load mixed content. Avatar
+// length is unbounded: providers choose the resolution they return, and the
+// value is display-only, so capping it would only drop valid avatars. Anything
+// that is neither an HTTP(S) URL nor a base64 image is omitted.
+function avatarClaim(value) {
+  if (typeof value !== 'string' || !value) return null;
+  const upgraded = value.replace(/^http:\/\//, 'https://');
+  if (upgraded.startsWith('https://')) return upgraded;
+  const inline = upgraded.replace(/\s+/g, '');
+  const payload = DATA_IMAGE_URL.exec(inline)?.[1];
+  if (!payload || payload.length % 4) return null;
+  return inline;
+}
+
 // Only explicitly configured consumers receive signed assertions. Other clients
 // retain their existing response contract; account consumers must reject that format.
 function callbackFields(callback, identity, env = process.env) {
@@ -37,8 +55,7 @@ function callbackFields(callback, identity, env = process.env) {
     jti: randomUUID(),
     name: typeof identity.name === 'string' ? identity.name.slice(0, 200) : null,
     email: typeof identity.email === 'string' ? identity.email.slice(0, 320) : null,
-    avatar: typeof identity.avatar === 'string' && /^https:\/\//.test(identity.avatar)
-      ? identity.avatar.slice(0, 1024) : null,
+    avatar: avatarClaim(identity.avatar),
   };
   const encode = value => Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
   const input = `${encode({ alg: 'RS256', typ: 'JWT' })}.${encode(claims)}`;

@@ -216,7 +216,7 @@ The JWT is signed, not encrypted. Treat it as short-lived authentication materia
 | `jti` | Unique assertion identifier |
 | `name`, `email`, `avatar` | Optional display fields; `name`/`email` are bounded to 200/320 characters, `avatar` is an HTTPS URL or an inline base64 image with no length bound |
 
-Do not auto-link local accounts by `email`: some adapters synthesize placeholder addresses and this protocol does not assert email ownership. Provider access tokens, `originalResponse`, and profile `url` are excluded from signed delivery; avatars are delivered as HTTPS URLs (`http://` is rewritten) or inline base64 images.
+Do not auto-link local accounts by `email`: some adapters omit email entirely and this protocol does not assert email ownership. Provider access tokens, `originalResponse`, and profile `url` are excluded from signed delivery; avatars are delivered as HTTPS URLs (`http://` is rewritten) or inline base64 images.
 
 ## Normalized provider result
 
@@ -274,6 +274,7 @@ Configure each variable separately in Vercel:
 | `STEAM_KEY` | Steam |
 | `MS_client_Id`, `MS_client_secret` | Microsoft personal accounts |
 | `OIDC_ID`, `OIDC_SECRET`, `OIDC_ISSUER` | Generic OIDC; explicit endpoints are also supported |
+| `ORCID_ID`, `ORCID_SECRET` | ORCID; register `https://<SERVER_URL>/orcid` as the authorized redirect URI |
 
 For OIDC without discovery, configure `OIDC_AUTH_URL`, `OIDC_TOKEN_URL`, and `OIDC_USERINFO_URL`. `OIDC_SCOPES` defaults to `openid profile email`. `MS_tenant_Id` is needed if you separately enable the Microsoft tenant adapter.
 
@@ -285,9 +286,9 @@ See [SIGNED_CALLBACKS.md](SIGNED_CALLBACKS.md) for key generation and coordinate
 
 `GET /` returns `{ version, services }`; enabled providers depend on exported adapters and configured credentials. Check this endpoint instead of hardcoding availability.
 
-The current exports are `github`, `google`, `qq`, `facebook`, `weibo`, `twitter`, `huawei`, `steam`, `oidc`, and `microsoft-consumers`. Source files for `microsoft-tenant` and `microsoft-common` exist but their exports are commented out in `src/index.js`.
+The current exports are `github`, `google`, `qq`, `facebook`, `weibo`, `twitter`, `huawei`, `steam`, `oidc`, `orcid`, and `microsoft-consumers`. Source files for `microsoft-tenant` and `microsoft-common` exist but their exports are commented out in `src/index.js`.
 
-GitHub currently identifies users by login name; QQ prefers unionid over openid; some providers generate placeholder emails. This update does not migrate existing provider IDs. Huawei retains an in-memory state bridge, and OIDC has provider-specific redirect requirements.
+GitHub currently identifies users by login name; QQ prefers unionid over openid; providers omit email when the upstream profile does not include one. This update does not migrate existing provider IDs. Huawei retains an in-memory state bridge, and OIDC has provider-specific redirect requirements. ORCID enriches `originalResponse` with the public `works` (publications) and `person` records fetched from `pub.orcid.org` on every login; this fetch is best-effort and never blocks the login, and it does not change the normalized profile or the signed JWT.
 
 ## Errors
 

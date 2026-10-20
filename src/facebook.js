@@ -1,7 +1,6 @@
 const Base = require('./base');
 const qs = require('querystring');
 const request = require('request-promise-native');
-const { buildPostForm } = require('./delivery/post-form');
 
 const OAUTH_URL       = 'https://www.facebook.com/v4.0/dialog/oauth';
 const ACCESS_TOKEN_URL = 'https://graph.facebook.com/v4.0/oauth/access_token';
@@ -69,39 +68,5 @@ module.exports = class extends Base {
       display: 'popup',
     });
     return this.ctx.redirect(url);
-  }
-
-  async getUserInfo() {
-    const { code, state: _state } = this.ctx.params;
-    const { redirect, state } = qs.parse(_state);
-
-    if (!code) return this.redirect();
-
-    this.ctx.type = 'json';
-    let userInfo;
-    try {
-      const accessTokenInfo = await this.getAccessToken(code);
-      userInfo = await this.getUserInfoByToken(accessTokenInfo);
-    } catch (error) {
-      if (redirect) {
-        const errUrl = new URL(redirect);
-        errUrl.searchParams.set('error', error.message);
-        if (state) errUrl.searchParams.set('state', state);
-        return this.ctx.redirect(errUrl.toString());
-      }
-      this.ctx.status = 500;
-      this.ctx.body = { error: error.message };
-      return;
-    }
-
-    if (redirect) {
-      const payload = { ...userInfo };
-      if (state) payload.state = state;
-      this.ctx.type = 'html';
-      this.ctx.body = buildPostForm(redirect, payload);
-      return;
-    }
-
-    return this.ctx.body = userInfo;
   }
 };

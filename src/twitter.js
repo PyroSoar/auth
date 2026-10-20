@@ -1,5 +1,4 @@
 const Base = require('./base');
-const { buildPostForm } = require('./delivery/post-form');
 const crypto = require('crypto');
 const qs = require('querystring');
 const request = require('request-promise-native');
@@ -155,23 +154,13 @@ module.exports = class extends Base {
     const userInfo = await this.formatUserResponse({
       id: u.id,
       name: u.name || u.username,
-      email: u.email || u.confirmed_email || `${u.id}@twitter-uuid.com`,
+      email: u.email || u.confirmed_email || undefined,
       url: u.url || (u.username ? `https://x.com/${u.username}` : undefined),
       avatar: u.profile_image_url || undefined,
       originalResponse: u
     }, 'twitter');
 
-    // One-phase: POST user data to client callback
-    if (clientRedirect) {
-      const payload = { ...userInfo };
-      if (stateData.state) payload.state = stateData.state;
-      this.ctx.type = 'html';
-      this.ctx.body = buildPostForm(clientRedirect, payload);
-      return;
-    }
-
-    // Server-to-server: return JSON directly
-    this.ctx.status = 200;
-    this.ctx.body = userInfo;
+    // One-phase: POST user data to client callback, or return JSON directly
+    this.deliverSuccess({ callback: clientRedirect, ticket: stateData.state }, userInfo);
   }
 };

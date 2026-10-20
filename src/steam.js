@@ -1,7 +1,6 @@
 const Base = require('./base');
 const qs = require('querystring');
 const request = require('request-promise-native');
-const { buildPostForm } = require('./delivery/post-form');
 
 const OPENID_CHECK_URL = 'https://steamcommunity.com/openid/login';
 const PLAYER_SUMMARY_URL = 'https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/';
@@ -80,7 +79,7 @@ module.exports = class extends Base {
     return await this.formatUserResponse({
       id: player.steamid,
       name: player.personaname,
-      email: `${player.steamid}@steam-uuid.com`,
+      email: undefined,
       url: player.profileurl,
       avatar: player.avatarfull,
       originalResponse: player
@@ -107,30 +106,10 @@ module.exports = class extends Base {
       userInfo = await this.getUserInfoByToken(tokenInfo);
     } catch (error) {
       console.error('[Steam] Error:', error.message);
-      if (clientRedirect) {
-        try {
-          const errUrl = new URL(clientRedirect);
-          errUrl.searchParams.set('error', error.message);
-          if (state) errUrl.searchParams.set('state', state);
-          return this.ctx.redirect(errUrl.toString());
-        } catch (_) {}
-      }
-      this.ctx.status = 500;
-      this.ctx.body = { error: error.message };
-      return;
+      return this.deliverError({ callback: clientRedirect, ticket: state }, error.message, 500);
     }
 
-    // One-phase: POST user data to client callback
-    if (clientRedirect) {
-      const payload = { ...userInfo };
-      if (state) payload.state = state;
-      console.log('[Steam] One-phase: POSTing user info to client');
-      this.ctx.type = 'html';
-      this.ctx.body = buildPostForm(clientRedirect, payload);
-      return;
-    }
-
-    this.ctx.type = 'json';
-    this.ctx.body = userInfo;
+    // One-phase: POST user data to client callback, or return JSON directly
+    this.deliverSuccess({ callback: clientRedirect, ticket: state }, userInfo);
   }
 };

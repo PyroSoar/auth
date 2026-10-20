@@ -18,21 +18,21 @@ class BaseProvider {
     return base + (path.startsWith('/') ? path : `/${path}`);
   }
 
-  async getUserInfo() {
-    const code = requestValue(this.ctx, 'code');
-    const context = callbackContext(this.ctx, path => this.getCompleteUrl(path));
-    const error = providerError(this.ctx);
+  /**
+   * Resolve the delivery context for the current request. Providers whose
+   * authorization flow encodes the client callback/state differently (e.g.
+   * PKCE, OpenID, OIDC multi-state) override this instead of getUserInfo().
+   * Returns { callback, ticket }.
+   */
+  resolveContext() {
+    return callbackContext(this.ctx, path => this.getCompleteUrl(path));
+  }
 
-    if (error) return this.#deliverError(context, error);
-    if (!code) return this.redirect();
-
-    let identity;
-    try {
-      identity = await this.getUserInfoByToken(await this.getAccessToken(code));
-    } catch (exchangeError) {
-      return this.#deliverError(context, exchangeError.message, 500);
-    }
-
+  /**
+   * Deliver a completed identity to the consumer: a signed/legacy form POST
+   * when a callback was resolved, otherwise a direct JSON response.
+   */
+  deliverSuccess(context, identity) {
     if (!context.callback) {
       this.ctx.type = 'json';
       this.ctx.body = identity;
@@ -46,15 +46,42 @@ class BaseProvider {
     });
   }
 
-  #deliverError({ callback, ticket }, message, status = 400) {
+  /**
+   * Deliver an exchange failure: redirect the consumer callback with the error
+   * (and ticket) when one was resolved, otherwise return a JSON error body.
+   */
+  deliverError(context, message, status = 400) {
+    const { callback, ticket } = context;
     if (callback) {
-      const destination = new URL(callback);
-      destination.searchParams.set('error', message);
-      if (ticket) destination.searchParams.set('state', ticket);
-      return this.ctx.redirect(destination.href);
+      try {
+        const destination = new URL(callback);
+        destination.searchParams.set('error', message);
+        if (ticket) destination.searchParams.set('state', ticket);
+        return this.ctx.redirect(destination.href);
+      } catch {
+        // Invalid callback URL: fall through to a JSON error body.
+      }
     }
     this.ctx.status = status;
     this.ctx.body = { error: message };
+  }
+
+  async getUserInfo() {
+    const code = requestValue(this.ctx, 'code');
+    const context = this.resolveContext();
+    const error = providerError(this.ctx);
+
+    if (error) return this.deliverError(context, error);
+    if (!code) return this.redirect();
+
+    let identity;
+    try {
+      identity = await this.getUserInfoByToken(await this.getAccessToken(code));
+    } catch (exchangeError) {
+      return this.deliverError(context, exchangeError.message, 500);
+    }
+
+    this.deliverSuccess(context, identity);
   }
 }
 

@@ -176,10 +176,10 @@ Unlisted callback destinations still receive ordinary form fields such as `id`, 
 ## Provider notes
 
 - GitHub currently uses the login name as `id`; renames can affect identity continuity.
-- QQ prefers `unionid` over `openid` and synthesizes an email when none exists.
-- Twitter/X uses OAuth 2.0 PKCE and may synthesize an email.
+- QQ prefers `unionid` over `openid` and omits email when none exists.
+- Twitter/X uses OAuth 2.0 PKCE; email is omitted when the provider does not return one.
 - Huawei stores redirect context in a process-local Map; multi-instance deployments need shared state.
-- Steam uses OpenID 2.0, verifies the assertion server-side, and synthesizes an email.
+- Steam uses OpenID 2.0, verifies the assertion server-side, and omits email.
 - Weibo and Microsoft return inline base64 avatars and QQ returns an `http://` URL; signed delivery passes them through, upgrading `http://` to `https://`.
 - Generic OIDC can use discovery or explicit endpoints and has provider-specific redirect requirements.
 - Only `microsoft-consumers` is currently exported. Tenant/common source files exist but must be enabled and validated separately.

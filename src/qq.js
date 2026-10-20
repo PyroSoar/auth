@@ -91,7 +91,7 @@ module.exports = class extends Base {
     return await this.formatUserResponse({
       id: tokenInfo.unionid || tokenInfo.openid,
       name: userInfo.nickname || 'QQ User',
-      email: userInfo.email || `${tokenInfo.openid}@qq-uuid.com`,
+      email: userInfo.email || undefined,
       url: undefined,
       avatar: toHttps(userInfo.figureurl_qq_2 || userInfo.figureurl_qq_1 || userInfo.figureurl_qq
            || userInfo.figureurl_2    || userInfo.figureurl_1    || userInfo.figureurl || undefined),

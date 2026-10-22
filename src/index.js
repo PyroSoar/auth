@@ -8,6 +8,7 @@ exports.qq = require('./qq');
 exports.oidc = require('./oidc');
 exports.huawei = require('./huawei');
 exports.steam = require('./steam');
+exports.alipay = require('./alipay');
 //exports['microsoft-tenant'] = require('./microsoft-tenant');
 exports['microsoft-consumers'] = require('./microsoft-consumers');
 //exports['microsoft-common'] = require('./microsoft-common');

@@ -275,6 +275,9 @@ Configure each variable separately in Vercel:
 | `MS_client_Id`, `MS_client_secret` | Microsoft personal accounts |
 | `OIDC_ID`, `OIDC_SECRET`, `OIDC_ISSUER` | Generic OIDC; explicit endpoints are also supported |
 | `ORCID_ID`, `ORCID_SECRET` | ORCID; register `https://<SERVER_URL>/orcid` as the authorized redirect URI |
+| `ALIPAY_APP_ID` | 支付宝开放平台分配的应用 ID（AppID） |
+| `ALIPAY_PRIVATE_KEY` | 支付宝应用私钥（RSA2 签名用，PKCS#1/PKCS#8 PEM，支持真实换行或字面 `\n`） |
+| `ALIPAY_PUBLIC_KEY` | 支付宝公钥，用于验签网关返回（预留，暂未强制校验） |
 
 For OIDC without discovery, configure `OIDC_AUTH_URL`, `OIDC_TOKEN_URL`, and `OIDC_USERINFO_URL`. `OIDC_SCOPES` defaults to `openid profile email`. `MS_tenant_Id` is needed if you separately enable the Microsoft tenant adapter.
 
@@ -286,9 +289,19 @@ See [SIGNED_CALLBACKS.md](SIGNED_CALLBACKS.md) for key generation and coordinate
 
 `GET /` returns `{ version, services }`; enabled providers depend on exported adapters and configured credentials. Check this endpoint instead of hardcoding availability.
 
-The current exports are `github`, `google`, `qq`, `facebook`, `weibo`, `twitter`, `huawei`, `steam`, `oidc`, `orcid`, and `microsoft-consumers`. Source files for `microsoft-tenant` and `microsoft-common` exist but their exports are commented out in `src/index.js`.
+The current exports are `github`, `google`, `qq`, `facebook`, `weibo`, `twitter`, `huawei`, `steam`, `oidc`, `orcid`, `alipay`, and `microsoft-consumers`. Source files for `microsoft-tenant` and `microsoft-common` exist but their exports are commented out in `src/index.js`.
 
 GitHub currently identifies users by login name; QQ prefers unionid over openid; providers omit email when the upstream profile does not include one. This update does not migrate existing provider IDs. Huawei retains an in-memory state bridge, and OIDC has provider-specific redirect requirements. ORCID enriches `originalResponse` with the public `works` (publications) and `person` records fetched from `pub.orcid.org` on every login; this fetch is best-effort and never blocks the login, and it does not change the normalized profile or the signed JWT.
+
+Alipay authenticates through an RSA2 public/private key pair rather than an OAuth client secret. Every gateway call (`alipay.system.oauth.token`, `alipay.user.info.share`) is signed with the merchant application private key; `ALIPAY_PRIVATE_KEY` holds that key as PEM, and literal `\n` sequences are accepted. The adapter normalizes `id` from `open_id` (falling back to `user_id`) and maps `nick_name`/`avatar` into the profile. Register `https://<SERVER_URL>/alipay` as the Alipay authorized callback URL.
+
+Alipay's authorization page rejects mobile browsers outside the Alipay client with "请在支付宝客户端打开链接". The adapter therefore routes by User-Agent: desktop browsers and requests already inside the Alipay client go straight to the authorization URL, while other mobile browsers are sent through Alipay's official hand-off link:
+
+```text
+https://ds.alipay.com/?scheme=<encoded alipays://platformapi/startapp?appId=20000067&url=<encoded-authorization-url>>
+```
+
+`20000067` is Alipay's built-in web-jump app. This relies on the browser honoring the scheme, so a minority of environments (notably in-app browsers such as WeChat) may fail to launch the client. Providing a manual "open in Alipay" link or a QR fallback in the consuming application is recommended.
 
 ## Errors
 

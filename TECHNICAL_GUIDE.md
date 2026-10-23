@@ -178,7 +178,8 @@ Unlisted callback destinations still receive ordinary form fields such as `id`, 
 - GitHub currently uses the login name as `id`; renames can affect identity continuity.
 - QQ prefers `unionid` over `openid` and omits email when none exists.
 - Twitter/X uses OAuth 2.0 PKCE; email is omitted when the provider does not return one.
-- Huawei stores redirect context in a process-local Map; multi-instance deployments need shared state.
+- Huawei and Honor share `src/huawei-honor-core.js`. Huawei uses the `query-redirect` transport, whose state bridge is process-local (lazily expired, swept on write); multi-instance deployments need shared storage. Honor uses `encoded-state`, which keeps redirect_uri bare and needs no state at all. Their common constraint is the `state` whitelist `^[0-9a-zA-Z:/._-]{1,255}$`: a querystring payload fails immediately with `error=1101` / `sub_error=20031`, which is why Honor encodes base64url and Huawei keeps `state` as the raw ticket. That leaves Honor roughly a 255-character budget for its encoded state, so an unusually long consumer callback must be shortened.
+- Both prefer `nsp_svc=GOpen.User.getInfo` and fall back to a best-effort `id_token` decode, so a profile outage degrades rather than failing the login. `GOpen.User.getInfo` returns `openID` only; union ids exist only inside Huawei's `id_token`.
 - Steam uses OpenID 2.0, verifies the assertion server-side, and omits email.
 - Weibo and Microsoft return inline base64 avatars and QQ returns an `http://` URL; signed delivery passes them through, upgrading `http://` to `https://`.
 - Generic OIDC can use discovery or explicit endpoints and has provider-specific redirect requirements.

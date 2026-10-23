@@ -7,6 +7,7 @@ exports.orcid = require('./orcid');
 exports.qq = require('./qq');
 exports.oidc = require('./oidc');
 exports.huawei = require('./huawei');
+exports.honor = require('./honor');
 exports.steam = require('./steam');
 exports.alipay = require('./alipay');
 //exports['microsoft-tenant'] = require('./microsoft-tenant');

@@ -34,7 +34,9 @@
 const { createHash, createPublicKey, randomBytes, randomUUID, verify } = require('node:crypto');
 
 const AUTH_SERVICE = 'https://oauth.lzc2002.top';
-const PROVIDERS = ['github', 'google', 'qq', 'facebook', 'weibo', 'twitter', 'huawei', 'steam', 'oidc', 'microsoft-consumers'];
+// Listed providers are the ones currently exported by src/index.js. Keep this
+// in sync when enabling a new adapter: a platform absent here is rejected.
+const PROVIDERS = ['github', 'google', 'qq', 'facebook', 'weibo', 'twitter', 'huawei', 'honor', 'steam', 'oidc', 'orcid', 'alipay', 'microsoft-consumers'];
 const BROWSER = '__Host-example_oauth_browser';
 const TICKET = '__Host-example_oauth_ticket';
 const cookie = (name, value, seconds) => name + '=' + value + '; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=' + seconds;

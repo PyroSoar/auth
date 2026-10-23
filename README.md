@@ -17,6 +17,7 @@ Import this repository directly as a Vercel project. The root `index.js` is the 
 - `src/security/` creates signed identity assertions for configured consumers.
 - `src/media/` handles provider media conversion.
 - Provider files such as `src/github.js` contain only provider-specific authorization and profile exchange logic.
+- `src/huawei-honor-core.js` is shared by the two HONOR/Huawei adapters; `src/huawei.js` and `src/honor.js` only declare hosts, credentials and route.
 - `test/` covers assertion, delivery, and integration contracts.
 
 ## Usage methods
@@ -271,6 +272,7 @@ Configure each variable separately in Vercel:
 | `WEIBO_ID`, `WEIBO_SECRET` | Weibo |
 | `TWITTER_ID`, `TWITTER_SECRET` | Twitter/X |
 | `HUAWEI_ID`, `HUAWEI_SECRET` | Huawei |
+| `HONOR_ID`, `HONOR_SECRET` | Honor |
 | `STEAM_KEY` | Steam |
 | `MS_client_Id`, `MS_client_secret` | Microsoft personal accounts |
 | `OIDC_ID`, `OIDC_SECRET`, `OIDC_ISSUER` | Generic OIDC; explicit endpoints are also supported |
@@ -289,9 +291,22 @@ See [SIGNED_CALLBACKS.md](SIGNED_CALLBACKS.md) for key generation and coordinate
 
 `GET /` returns `{ version, services }`; enabled providers depend on exported adapters and configured credentials. Check this endpoint instead of hardcoding availability.
 
-The current exports are `github`, `google`, `qq`, `facebook`, `weibo`, `twitter`, `huawei`, `steam`, `oidc`, `orcid`, `alipay`, and `microsoft-consumers`. Source files for `microsoft-tenant` and `microsoft-common` exist but their exports are commented out in `src/index.js`.
+The current exports are `github`, `google`, `qq`, `facebook`, `weibo`, `twitter`, `huawei`, `honor`, `steam`, `oidc`, `orcid`, `alipay`, and `microsoft-consumers`. Source files for `microsoft-tenant` and `microsoft-common` exist but their exports are commented out in `src/index.js`.
 
-GitHub currently identifies users by login name; QQ prefers unionid over openid; providers omit email when the upstream profile does not include one. This update does not migrate existing provider IDs. Huawei retains an in-memory state bridge, and OIDC has provider-specific redirect requirements. ORCID enriches `originalResponse` with the public `works` (publications) and `person` records fetched from `pub.orcid.org` on every login; this fetch is best-effort and never blocks the login, and it does not change the normalized profile or the signed JWT.
+GitHub currently identifies users by login name; QQ prefers unionid over openid; providers omit email when the upstream profile does not include one. This update does not migrate existing provider IDs. OIDC has provider-specific redirect requirements. ORCID enriches `originalResponse` with the public `works` (publications) and `person` records fetched from `pub.orcid.org` on every login; this fetch is best-effort and never blocks the login, and it does not change the normalized profile or the signed JWT.
+
+Huawei and Honor are the same account implementation under different brands, so they share one source file, `src/huawei-honor-core.js`; each adapter declares only its hosts, credentials and route. Both use the same authorization-code flow (`/oauth2/v3/authorize`, `/oauth2/v3/token`) and read the profile from `nsp_svc=GOpen.User.getInfo`, preferring it and falling back to a best-effort `id_token` decode when the profile call fails or omits a field. A profile outage therefore degrades to the older Huawei behavior rather than breaking the login. Both echo codes and access tokens with `\` escapes and document stripping them before use; the core does that and leaves URL-encoding to the HTTP client. Register `https://<SERVER_URL>/huawei` and `https://<SERVER_URL>/honor` as the authorized callback URLs.
+
+The two adapters differ only in how the consumer callback reaches them, which matters because these providers validate `state` against the whitelist `^[0-9a-zA-Z:/._-]{1,255}$`:
+
+| Transport | Used by | Callback rides on | Cost |
+|---|---|---|---|
+| `query-redirect` | Huawei | the redirect_uri query string, leaving `state` a clean opaque ticket | needs a process-local state bridge, so multi-instance deployments need shared storage |
+| `encoded-state` | Honor | base64url JSON inside `state`, keeping redirect_uri bare | roughly a 255-character budget, so an unusually long consumer callback must be shortened |
+
+HONOR rejects a querystring payload outright with `error=1101` / `sub_error=20031` before any login page renders, because it carries `=` and `%`. base64url has no URL delimiters and Node emits it without `=` padding, so it clears the whitelist. Switching a provider between transports changes the callback it sends, so it also requires revisiting the callback registered in that provider's console.
+
+`GOpen.User.getInfo` returns only `openID` — no union id — so `id` falls back to the `id_token` when the profile omits it. Display name comes from `displayName` with `getNickName=1`, which prefers the real nickname over the anonymized account string.
 
 Alipay authenticates through an RSA2 public/private key pair rather than an OAuth client secret. Every gateway call (`alipay.system.oauth.token`, `alipay.user.info.share`) is signed with the merchant application private key; `ALIPAY_PRIVATE_KEY` holds that key as PEM, and literal `\n` sequences are accepted. The adapter normalizes `id` from `open_id` (falling back to `user_id`) and maps `nick_name`/`avatar` into the profile. Register `https://<SERVER_URL>/alipay` as the Alipay authorized callback URL.
 
